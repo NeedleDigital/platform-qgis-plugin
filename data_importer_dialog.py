@@ -459,7 +459,37 @@ class DataImporterDialog(QDialog):
             self.assays_state_filter.addItems(states)
             controls_layout.addRow("State(s):", self.assays_state_filter)
             self.assay_element_input = QComboBox()
-            self.assay_element_input.addItems(['Cu', 'Au', 'Pb', 'Zn', 'Mn', 'Al'])
+            # Add elements with display names and lowercase symbols for API calls
+            elements = [
+                ('Silver - Ag', 'ag'), ('Aluminum - Al', 'al'), ('Americium - Am', 'am'), ('Argon - Ar', 'ar'), 
+                ('Arsenic - As', 'as'), ('Astatine - At', 'at'), ('Gold - Au', 'au'), ('Boron - B', 'b'), 
+                ('Barium - Ba', 'ba'), ('Beryllium - Be', 'be'), ('Berkelium - Bk', 'bk'), ('Bromine - Br', 'br'), 
+                ('Carbon - C', 'c'), ('Calcium - Ca', 'ca'), ('Cadmium - Cd', 'cd'), ('Cerium - Ce', 'ce'), 
+                ('Californium - Cf', 'cf'), ('Chlorine - Cl', 'cl'), ('Curium - Cm', 'cm'), ('Cobalt - Co', 'co'), 
+                ('Chromium - Cr', 'cr'), ('Cesium - Cs', 'cs'), ('Copper - Cu', 'cu'), ('Dysprosium - Dy', 'dy'), 
+                ('Erbium - Er', 'er'), ('Einsteinium - Es', 'es'), ('Europium - Eu', 'eu'), ('Fluorine - F', 'f'), 
+                ('Iron - Fe', 'fe'), ('Fermium - Fm', 'fm'), ('Francium - Fr', 'fr'), ('Gallium - Ga', 'ga'), 
+                ('Gadolinium - Gd', 'gd'), ('Germanium - Ge', 'ge'), ('Hydrogen - H', 'h'), ('Hafnium - Hf', 'hf'), 
+                ('Mercury - Hg', 'hg'), ('Holmium - Ho', 'ho'), ('Iodine - I', 'i'), ('Indium - In', 'in'), 
+                ('Iridium - Ir', 'ir'), ('Potassium - K', 'k'), ('Krypton - Kr', 'kr'), ('Lanthanum - La', 'la'), 
+                ('Lithium - Li', 'li'), ('Lawrencium - Lr', 'lr'), ('Lutetium - Lu', 'lu'), ('Mendelevium - Md', 'md'), 
+                ('Magnesium - Mg', 'mg'), ('Manganese - Mn', 'mn'), ('Molybdenum - Mo', 'mo'), ('Nitrogen - N', 'n'), 
+                ('Sodium - Na', 'na'), ('Niobium - Nb', 'nb'), ('Neodymium - Nd', 'nd'), ('Neon - Ne', 'ne'), 
+                ('Nickel - Ni', 'ni'), ('Nobelium - No', 'no'), ('Neptunium - Np', 'np'), ('Oxygen - O', 'o'), 
+                ('Osmium - Os', 'os'), ('Phosphorus - P', 'p'), ('Protactinium - Pa', 'pa'), ('Lead - Pb', 'pb'), 
+                ('Palladium - Pd', 'pd'), ('Promethium - Pm', 'pm'), ('Polonium - Po', 'po'), ('Praseodymium - Pr', 'pr'), 
+                ('Platinum - Pt', 'pt'), ('Plutonium - Pu', 'pu'), ('Radium - Ra', 'ra'), ('Rubidium - Rb', 'rb'), 
+                ('Rhenium - Re', 're'), ('Rutherfordium - Rf', 'rf'), ('Rhodium - Rh', 'rh'), ('Radon - Rn', 'rn'), 
+                ('Ruthenium - Ru', 'ru'), ('Sulfur - S', 's'), ('Antimony - Sb', 'sb'), ('Scandium - Sc', 'sc'), 
+                ('Selenium - Se', 'se'), ('Silicon - Si', 'si'), ('Samarium - Sm', 'sm'), ('Tin - Sn', 'sn'), 
+                ('Strontium - Sr', 'sr'), ('Tantalum - Ta', 'ta'), ('Terbium - Tb', 'tb'), ('Technetium - Tc', 'tc'), 
+                ('Tellurium - Te', 'te'), ('Thorium - Th', 'th'), ('Titanium - Ti', 'ti'), ('Thallium - Tl', 'tl'), 
+                ('Thulium - Tm', 'tm'), ('Uranium - U', 'u'), ('Vanadium - V', 'v'), ('Tungsten - W', 'w'), 
+                ('Xenon - Xe', 'xe'), ('Yttrium - Y', 'y'), ('Ytterbium - Yb', 'yb'), ('Zinc - Zn', 'zn'), 
+                ('Zirconium - Zr', 'zr')
+            ]
+            for display_name, symbol in elements:
+                self.assay_element_input.addItem(display_name, symbol)
             self.assay_operator_input = QComboBox()
             self.assay_operator_input.addItems(['>', '<', '=', '!=', '>=', '<='])
             self.assay_value_input = QLineEdit()

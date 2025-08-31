@@ -335,14 +335,30 @@ class DataImporter:
         reply.deleteLater()
 
     def fetch_new_data(self, tab_name):
-        self.fetch_start_time = time.time()
+        if not self.auth_token:
+            if self.dlg: self.dlg.show_error("You must be logged in to fetch data.")
+            return
+        
+        # Check state selection for "fetch all" functionality
         state = self.tab_states[tab_name]; ui = state['ui_widgets']
+        fetch_all = ui['fetch_all_checkbox'].isChecked()
+        selected_states = ui['state_filter'].currentData()
+        
+        if fetch_all:
+            if len(selected_states) != 1:
+                if len(selected_states) == 0:
+                    self.dlg.show_error("To fetch all records, you must select exactly one state. Please select a state first.")
+                else:
+                    self.dlg.show_error("To fetch all records, you must select exactly one state. Please select only one state.")
+                return
+        
+        self.fetch_start_time = time.time()
         self.clear_tab_data(tab_name)
         endpoint = "plugin/fetch_dh_count" if tab_name == 'Holes' else "plugin/fetch_assay_count"
         params = self._build_filter_params(tab_name)
         ui['loading_label'].setText("Calculating total available records...")
         ui['content_stack'].setCurrentWidget(ui['loading_label'])
-        self.dlg.status_label.setText("Calculating total..."); self.dlg.progress_bar.setValue(5)
+        self.dlg.status_label.setText("Calculating total records..."); self.dlg.progress_bar.setValue(5)
         self.make_api_request(endpoint, params, tab_name, purpose="get_total_count")
             
     def _start_sequential_fetch(self, tab_name, records_to_fetch):
@@ -449,7 +465,7 @@ class DataImporter:
             state['companies'] = ui['company_filter'].currentData()
             if state['companies']: params['companies'] = ",".join(state['companies'])
         else:
-            state['element'] = ui['element_input'].currentText()
+            state['element'] = ui['element_input'].currentData()
             state['operator'] = ui['operator_input'].currentText()
             state['value'] = ui['value_input'].text()
             params['element'] = state['element']
@@ -502,7 +518,13 @@ class DataImporter:
             if tab_name == 'Holes':
                 if 'company_filter' in ui: ui['company_filter'].setCurrentData(state.get('companies', []))
             else:
-                if 'element_input' in ui: ui['element_input'].setCurrentText(state.get('element', 'Cu'))
+                if 'element_input' in ui:
+                    element_value = state.get('element', 'cu')
+                    # Find index by data value (lowercase symbol)
+                    for i in range(ui['element_input'].count()):
+                        if ui['element_input'].itemData(i) == element_value:
+                            ui['element_input'].setCurrentIndex(i)
+                            break
                 if 'operator_input' in ui: ui['operator_input'].setCurrentText(state.get('operator', '>'))
                 if 'value_input' in ui: ui['value_input'].setText(state.get('value', ''))
             page_data = self.get_page_data(tab_name)

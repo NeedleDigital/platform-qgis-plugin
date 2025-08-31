@@ -41,7 +41,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = u'DataImporter'
-copyright = u'2013, Needle Digital'
+copyright = u'2025, Needle Digital'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the

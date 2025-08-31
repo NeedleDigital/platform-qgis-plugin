@@ -5,12 +5,12 @@
 [general]
 name=Needle Digital DH Importer
 qgisMinimumVersion=3.0
-description=To import drill hole data of australia
+description=Import Australian mining drill hole data
 version=0.1
 author=Needle Digital
-email=divyansh@nedle-digital.com
+email=divyansh@needle-digital.com
 
-about=This plugin allows to import australia wide drill hole data into QGIS.
+about=This plugin allows users to import Australia-wide drill hole data into QGIS.
 
 tracker=https://github.com/NeedleDigital/platform-qgis-plugin/issues
 repository=https://github.com/NeedleDigital/platform-qgis-plugin
