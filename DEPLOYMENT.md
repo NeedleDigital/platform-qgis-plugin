@@ -41,14 +41,6 @@ export NEEDLE_BASE_API_URL="https://v2-api.needle.digital/api/v2"
 export NEEDLE_LOG_LEVEL="INFO"
 ```
 
-### Configuration File (Alternative)
-
-If environment variables cannot be used, create production configuration:
-
-1. Copy `src/config/secrets.env.example` to `src/config/secrets.env`
-2. Fill in production values
-3. Ensure file permissions are restrictive (600)
-
 ## Packaging for Distribution
 
 ### Create Distribution Package
@@ -71,8 +63,6 @@ needle-digital-qgis-plugin/
 ├── src/
 │   ├── api/
 │   ├── config/
-│   │   ├── secrets.env.example    # Template only
-│   │   └── ...
 │   ├── core/
 │   ├── ui/
 │   └── utils/

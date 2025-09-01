@@ -19,7 +19,7 @@ class Config:
         """Load configuration from environment variables or config file."""
         # Try to load from environment variables first (for production)
         self.FIREBASE_API_KEY = os.getenv("NEEDLE_FIREBASE_API_KEY")
-        self.BASE_API_URL = os.getenv("NEEDLE_BASE_API_URL", "https://master.api.agni.needle-digital.com")
+        self.BASE_API_URL = os.getenv("NEEDLE_BASE_API_URL")
         
         # If not found in env vars, try to load from config file (for development)
         if not self.FIREBASE_API_KEY and self._config_file.exists():

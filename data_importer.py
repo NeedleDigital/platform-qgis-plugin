@@ -12,7 +12,7 @@ from qgis.core import Qgis
 # Import modular components
 from .src.core.data_manager import DataManager
 from .src.ui.main_dialog import DataImporterDialog
-from .src.ui.components import LoginDialog
+from .src.ui.components import LoginDialog, LayerOptionsDialog
 from .src.utils.qgis_helpers import QGISLayerManager
 from .src.utils.logging import get_logger
 from .src.config.constants import PLUGIN_NAME, PLUGIN_VERSION
