@@ -128,11 +128,17 @@ class ApiClient(QObject):
         
         # Add query parameters for GET requests
         if method == "GET" and params:
-            query = request_url.query()
+            # Build query string manually to avoid Qt version compatibility issues
+            query_parts = []
             for key, value in params.items():
                 if value is not None:
-                    query.addQueryItem(key, str(value))
-            request_url.setQuery(query)
+                    query_parts.append(f"{key}={str(value)}")
+            if query_parts:
+                query_string = "&".join(query_parts)
+                if "?" in url:
+                    request_url = QUrl(f"{url}&{query_string}")
+                else:
+                    request_url = QUrl(f"{url}?{query_string}")
         
         request = QNetworkRequest(request_url)
         
@@ -237,11 +243,18 @@ class ApiClient(QObject):
                 self.token_refresh_timer.start(refresh_delay_ms)
                 
                 logger.info("Token refreshed successfully")
+                
+                # Emit login_success signal to update UI
+                self.login_success.emit()
             else:
                 logger.error("Token refresh failed: No token in response")
+                # Emit login_failed signal to update UI
+                self.login_failed.emit("Token refresh failed")
                 
         except Exception as e:
             logger.error(f"Token refresh processing error: {e}")
+            # Emit login_failed signal to update UI
+            self.login_failed.emit(f"Token refresh error: {e}")
     
     def _handle_api_response(self, endpoint: str, response_data: Dict[str, Any], 
                            callback: Optional[Callable] = None) -> None:

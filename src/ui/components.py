@@ -109,6 +109,8 @@ class Chip(QWidget):
         
         self.close_button = QPushButton("×", self)
         self.close_button.setFixedSize(16, 16)
+        self.close_button.setDefault(False)
+        self.close_button.setAutoDefault(False)
         self.close_button.setStyleSheet("""
             QPushButton {
                 font-family: "Arial", sans-serif; 
@@ -164,10 +166,34 @@ class CheckableComboBox(QComboBox):
     def handleItemPressed(self, index):
         """Handle item press to toggle checkbox state."""
         item = self.model().itemFromIndex(index)
-        if item.checkState() == Qt.Checked:
-            item.setCheckState(Qt.Unchecked)
+        item_data = item.data(Qt.UserRole)
+        
+        # Handle "All States" exclusive selection
+        if item_data == "":  # "All States" has empty string as data
+            if item.checkState() == Qt.Checked:
+                # If "All States" was checked, uncheck it
+                item.setCheckState(Qt.Unchecked)
+            else:
+                # If "All States" was unchecked, check it and uncheck all others
+                item.setCheckState(Qt.Checked)
+                # Uncheck all other items
+                for i in range(self.model().rowCount()):
+                    other_item = self.model().item(i)
+                    if other_item.data(Qt.UserRole) != "":
+                        other_item.setCheckState(Qt.Unchecked)
         else:
-            item.setCheckState(Qt.Checked)
+            # Handle other state selection
+            if item.checkState() == Qt.Checked:
+                # If this state was checked, uncheck it
+                item.setCheckState(Qt.Unchecked)
+            else:
+                # If this state was unchecked, check it and uncheck "All States"
+                item.setCheckState(Qt.Checked)
+                # Uncheck "All States" (first item)
+                all_states_item = self.model().item(0)
+                if all_states_item and all_states_item.data(Qt.UserRole) == "":
+                    all_states_item.setCheckState(Qt.Unchecked)
+        
         self._update_selection()
 
     def hidePopup(self):
@@ -415,6 +441,11 @@ class LoginDialog(QDialog):
         # Buttons
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.button(QDialogButtonBox.Ok).setText("Login")
+        # Fix focus issues
+        self.button_box.button(QDialogButtonBox.Ok).setDefault(False)
+        self.button_box.button(QDialogButtonBox.Ok).setAutoDefault(False)
+        self.button_box.button(QDialogButtonBox.Cancel).setDefault(False) 
+        self.button_box.button(QDialogButtonBox.Cancel).setAutoDefault(False)
         self.button_box.accepted.connect(self.handle_login_attempt)
         self.button_box.rejected.connect(self.reject)
         
@@ -461,6 +492,8 @@ class LayerOptionsDialog(QDialog):
         
         # Color selection
         self.color_button = QPushButton("Select Point Color")
+        self.color_button.setDefault(False)
+        self.color_button.setAutoDefault(False)
         self.selected_color = QColor(255, 0, 0)  # Default red
         self.update_color_button_stylesheet()
         self.color_button.clicked.connect(self.select_color)

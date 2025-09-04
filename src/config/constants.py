@@ -16,6 +16,7 @@ DEFAULT_RECORD_COUNT = 100
 
 # Australian states and territories
 AUSTRALIAN_STATES: List[Tuple[str, str]] = [
+    ("All States", ""),  # Default option - empty value means no state filter
     ("New South Wales", "NSW"),
     ("Queensland", "QLD"), 
     ("South Australia", "SA"),

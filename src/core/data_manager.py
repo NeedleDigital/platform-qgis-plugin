@@ -77,7 +77,13 @@ class DataManager(QObject):
         
         # Validate fetch_all request
         if fetch_all:
-            selected_states = filter_params.get('states', [])
+            # Convert states parameter to list for validation
+            states_param = filter_params.get('states', "")
+            if states_param:
+                selected_states = [state.strip() for state in states_param.split(",")]
+            else:
+                selected_states = []  # "All States" case
+            
             is_valid, error_msg = validate_fetch_all_request(selected_states)
             if not is_valid:
                 self.error_occurred.emit(error_msg)
@@ -109,12 +115,16 @@ class DataManager(QObject):
                               fetch_all: bool) -> None:
         """Handle the response from count API."""
         try:
+            logger.info(f"Count response structure: keys={list(response_data.keys())}")
+            logger.info(f"Full count response: {response_data}")
+            
             total_count = int(response_data.get('count', 0))
             self.tab_states[tab_name]['total_records'] = total_count
             
             log_api_response(f"{tab_name.lower()}_count", True, total_count, logger)
             
             if total_count == 0:
+                self.progress_changed.emit(0)  # Reset progress bar
                 self.status_changed.emit("No records found matching your criteria.")
                 self.data_ready.emit(tab_name, [], [])
                 return
@@ -195,6 +205,10 @@ class DataManager(QObject):
             chunk_data = response_data.get('data', [])
             headers = response_data.get('headers', [])
             
+            logger.info(f"Chunk response structure: keys={list(response_data.keys())}")
+            logger.info(f"Chunk data length: {len(chunk_data)}")
+            logger.info(f"Headers: {headers}")
+            
             # Store headers (from first chunk)
             if not self.tab_states[tab_name]['headers']:
                 self.tab_states[tab_name]['headers'] = headers
@@ -263,6 +277,9 @@ class DataManager(QObject):
     def clear_tab_data(self, tab_name: str) -> None:
         """Clear data for a tab."""
         self._clear_tab_data(tab_name)
+        # Reset UI state
+        self.progress_changed.emit(0)
+        self.status_changed.emit("Ready to fetch data.")
         self.data_ready.emit(tab_name, [], [])
     
     def _clear_tab_data(self, tab_name: str) -> None:

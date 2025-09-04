@@ -32,8 +32,23 @@ class DataImporter:
         self.iface = iface
         self.plugin_dir = os.path.dirname(__file__)
         
-        # Initialize locale
-        locale = QCoreApplication.locale().name()[:2]
+        # Initialize locale - handle different QGIS versions robustly
+        locale = 'en'  # Default fallback
+        try:
+            # Try QLocale first (most reliable)
+            from qgis.PyQt.QtCore import QLocale
+            locale = QLocale().name()[:2]
+        except (ImportError, AttributeError):
+            try:
+                # Try QCoreApplication as fallback
+                locale = QCoreApplication.locale().name()[:2]
+            except (AttributeError, TypeError):
+                # Use system locale as last resort
+                import locale as sys_locale
+                try:
+                    locale = sys_locale.getdefaultlocale()[0][:2] if sys_locale.getdefaultlocale()[0] else 'en'
+                except:
+                    locale = 'en'
         locale_path = os.path.join(
             self.plugin_dir,
             'i18n',
@@ -172,6 +187,10 @@ class DataImporter:
         # API client signals
         self.data_manager.api_client.login_success.connect(self._handle_login_success)
         self.data_manager.api_client.login_failed.connect(self._handle_login_failed)
+        
+        # Connect to silent login completion for UI updates
+        self.data_manager.api_client.login_success.connect(self._update_ui_on_auth_change)
+        self.data_manager.api_client.login_failed.connect(self._update_ui_on_auth_change)
 
     def _handle_login_request(self):
         """Handle login request from dialog."""
@@ -267,6 +286,16 @@ class DataImporter:
             
         except Exception as e:
             logger.error(f"Login failure handler error: {str(e)}")
+
+    def _update_ui_on_auth_change(self):
+        """Update UI when authentication status changes (including silent login)."""
+        try:
+            if self.dlg:
+                is_authenticated = self.data_manager.is_authenticated()
+                self.dlg.update_login_status(is_authenticated)
+                logger.info(f"UI updated - Authentication status: {is_authenticated}")
+        except Exception as e:
+            logger.error(f"UI update error: {str(e)}")
 
     def _handle_data_fetch_request(self, tab_name, params, fetch_all):
         """Handle data fetch request."""

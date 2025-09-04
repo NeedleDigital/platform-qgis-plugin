@@ -40,14 +40,14 @@ Set the following environment variables:
 
 ```bash
 export NEEDLE_FIREBASE_API_KEY="your_firebase_api_key"
-export NEEDLE_BASE_API_URL="https://master.api.drh.needle-digital.com/"
+export NEEDLE_BASE_API_URL="https://master.api.drh.needle-digital.com"
 ```
 
 ### Configuration File (Development)
 
 ```bash
 NEEDLE_FIREBASE_API_KEY=your_firebase_api_key_here
-NEEDLE_BASE_API_URL=https://master.api.drh.needle-digital.com/
+NEEDLE_BASE_API_URL=https://master.api.agni.needle-digital.com
 ```
 
 **Important**: Never commit the `secrets.env` file to version control.

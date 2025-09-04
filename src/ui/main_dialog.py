@@ -71,6 +71,12 @@ class DataImporterDialog(QDialog):
         self.reset_all_button.setVisible(False)
         self.login_button = QPushButton("Login")
         
+        # Fix focus issues - prevent login button from stealing Enter key presses
+        self.login_button.setDefault(False)
+        self.login_button.setAutoDefault(False)
+        self.reset_all_button.setDefault(False)
+        self.reset_all_button.setAutoDefault(False)
+        
         header_layout.addWidget(self.reset_all_button)
         header_layout.addWidget(self.login_button)
         
@@ -101,6 +107,8 @@ class DataImporterDialog(QDialog):
         # State filter (common to both tabs)
         state_filter = StaticFilterWidget()
         state_filter.addItems(AUSTRALIAN_STATES)
+        # Set "All States" as default (first item, empty value)
+        state_filter.setCurrentData([""])
         controls_layout.addRow("State(s):", state_filter)
         
         widgets = {
@@ -133,6 +141,8 @@ class DataImporterDialog(QDialog):
             
             # Fetch button
             fetch_button = QPushButton("Fetch Holes")
+            fetch_button.setDefault(False)
+            fetch_button.setAutoDefault(False)
             controls_layout.addRow("", fetch_button)
             widgets['fetch_button'] = fetch_button
             
@@ -182,6 +192,8 @@ class DataImporterDialog(QDialog):
             
             # Fetch button
             fetch_button = QPushButton("Fetch Assay Data")
+            fetch_button.setDefault(False)
+            fetch_button.setAutoDefault(False)
             controls_layout.addRow("", fetch_button)
             widgets['fetch_button'] = fetch_button
         
@@ -239,7 +251,12 @@ class DataImporterDialog(QDialog):
         action_layout.addStretch()
         
         clear_button = QPushButton("Clear Filters & Data")
+        clear_button.setDefault(False)
+        clear_button.setAutoDefault(False)
+        
         import_button = QPushButton("Import All Data to QGIS")
+        import_button.setDefault(False)
+        import_button.setAutoDefault(False)
         import_button.setVisible(False)  # Hidden until data is available
         
         action_layout.addWidget(clear_button)
@@ -301,9 +318,14 @@ class DataImporterDialog(QDialog):
         tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
         
         # Build filter parameters
-        params = {
-            'states': tab_widgets['state_filter'].currentData()
-        }
+        params = {}
+        
+        # Handle states - convert to comma-separated string, exclude empty values
+        selected_states = tab_widgets['state_filter'].currentData()
+        # Filter out empty values (which represent "All States")
+        valid_states = [state for state in selected_states if state and state.strip()]
+        if valid_states:
+            params['states'] = ",".join(valid_states)
         
         if tab_name == "Holes":
             companies = tab_widgets['company_filter'].currentData()
