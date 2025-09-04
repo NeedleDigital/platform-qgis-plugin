@@ -24,20 +24,20 @@ def validate_fetch_all_request(selected_states: List[str]) -> Tuple[bool, Option
     Validate fetch all records request.
     
     Args:
-        selected_states: List of selected state codes (empty list means "All States")
+        selected_states: List of selected state codes
         
     Returns:
         Tuple of (is_valid, error_message)
     """
     if len(selected_states) == 0:
-        # "All States" is allowed for fetch all
+        # No states selected is allowed for fetch all (will fetch from all states)
         return True, None
     elif len(selected_states) == 1:
         # Single state is allowed
         return True, None
     else:
         # Multiple states not allowed for fetch all
-        return False, "To fetch all records, you must select either 'All States' or exactly one state."
+        return False, "To fetch all records, you must select no states or exactly one state."
 
 def validate_assay_filter(element: str, operator: str, value: str) -> Tuple[bool, Optional[str]]:
     """

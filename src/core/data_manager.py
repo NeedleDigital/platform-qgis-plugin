@@ -115,10 +115,13 @@ class DataManager(QObject):
                               fetch_all: bool) -> None:
         """Handle the response from count API."""
         try:
+            print(f"[DEBUG] Count response structure: keys={list(response_data.keys())}")
+            print(f"[DEBUG] Full count response: {response_data}")
+            
             logger.info(f"Count response structure: keys={list(response_data.keys())}")
             logger.info(f"Full count response: {response_data}")
             
-            total_count = int(response_data.get('count', 0))
+            total_count = int(response_data.get('total_count', 0))
             self.tab_states[tab_name]['total_records'] = total_count
             
             log_api_response(f"{tab_name.lower()}_count", True, total_count, logger)
@@ -201,9 +204,25 @@ class DataManager(QObject):
             status = self.batch_fetch_status
             tab_name = status['tab_name']
             
-            # Extract data
-            chunk_data = response_data.get('data', [])
-            headers = response_data.get('headers', [])
+            # Extract data based on tab_name
+            if tab_name == "Holes":
+                chunk_data = response_data.get('holes', [])
+            else:  # Assays
+                chunk_data = response_data.get('assays', [])
+            
+            # Generate headers from first record if we don't have them yet
+            headers = []
+            if chunk_data and not self.tab_states[tab_name]['headers']:
+                headers = list(chunk_data[0].keys())
+            else:
+                headers = self.tab_states[tab_name]['headers']
+            
+            print(f"[DEBUG] Chunk response structure: keys={list(response_data.keys())}")
+            print(f"[DEBUG] Full response: {response_data}")
+            print(f"[DEBUG] Chunk data length: {len(chunk_data)}")
+            print(f"[DEBUG] Headers: {headers}")
+            if chunk_data:
+                print(f"[DEBUG] First chunk record: {chunk_data[0]}")
             
             logger.info(f"Chunk response structure: keys={list(response_data.keys())}")
             logger.info(f"Chunk data length: {len(chunk_data)}")

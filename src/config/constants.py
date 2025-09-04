@@ -18,7 +18,6 @@ DEFAULT_RECORD_COUNT = 100
 
 # Australian states and territories
 AUSTRALIAN_STATES: List[Tuple[str, str]] = [
-    ("All States", ""),  # Default option - empty value means no state filter
     ("New South Wales", "NSW"),
     ("Queensland", "QLD"), 
     ("South Australia", "SA"),
@@ -102,8 +101,8 @@ UI_CONFIG = {
 # Validation messages
 VALIDATION_MESSAGES = {
     'auth_required': 'You must be logged in to fetch data.',
-    'fetch_all_no_state': 'To fetch all records, you must select exactly one state. Please select a state first.',
-    'fetch_all_multiple_states': 'To fetch all records, you must select exactly one state. Please select only one state.',
+    'fetch_all_no_state': 'To fetch all records, you can select no states or exactly one state.',
+    'fetch_all_multiple_states': 'To fetch all records, you must select no states or exactly one state. Please deselect some states.',
     'invalid_credentials': 'A valid email and password are required.',
     'network_error': 'Network error occurred. Please check your connection and try again.',
     'api_error': 'API request failed. Please try again later.',

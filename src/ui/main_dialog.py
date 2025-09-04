@@ -153,9 +153,21 @@ class DataImporterDialog(QDialog):
                 element_input.addItem(display_name, symbol)
             
             operator_input = QComboBox()
+            operator_input.addItem("None")  # Add None as first option
             operator_input.addItems(COMPARISON_OPERATORS)
+            operator_input.setCurrentIndex(0)  # Set None as default
             
             value_input = QLineEdit()
+            value_input.setEnabled(False)  # Initially disabled since "None" is default
+            
+            # Connect operator change to enable/disable value field
+            def on_operator_changed():
+                is_none_selected = operator_input.currentText() == "None"
+                value_input.setEnabled(not is_none_selected)
+                if is_none_selected:
+                    value_input.clear()
+            
+            operator_input.currentTextChanged.connect(on_operator_changed)
             
             element_layout = QHBoxLayout()
             element_layout.setContentsMargins(0, 0, 0, 0)
@@ -333,10 +345,14 @@ class DataImporterDialog(QDialog):
                 params['companies'] = ",".join(companies)
         else:  # Assays
             params['element'] = tab_widgets['element_input'].currentData()
-            params['operator'] = tab_widgets['operator_input'].currentText()
+            operator = tab_widgets['operator_input'].currentText()
             value = tab_widgets['value_input'].text().strip()
-            if value:
-                params['value'] = value
+            
+            # Only add operator and value if operator is not "None"
+            if operator != "None":
+                params['operator'] = operator
+                if value:
+                    params['value'] = value
         
         # Check if fetch_all is requested
         fetch_all = tab_widgets['fetch_all_checkbox'].isChecked()
@@ -386,6 +402,11 @@ class DataImporterDialog(QDialog):
     
     def show_data(self, tab_name: str, data: list, headers: list):
         """Show data in the specified tab."""
+        # Debug logging
+        print(f"[DEBUG] show_data called: tab_name={tab_name}, data_length={len(data)}, headers={headers}")
+        if data:
+            print(f"[DEBUG] First record: {data[0] if data else 'None'}")
+        
         tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
         
         table = tab_widgets['table']
