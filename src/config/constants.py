@@ -11,6 +11,8 @@ PLUGIN_AUTHOR = "Needle Digital"
 PLUGIN_DESCRIPTION = "Import Australian mining drill hole data into QGIS"
 
 # API Configuration
+NEEDLE_FIREBASE_API_KEY = "AIzaSyCuX5I0TaQCVmIUVdo1uM_aOQ3zVkrUV8Y"
+NEEDLE_BASE_API_URL = "https://master.api.drh.needle-digital.com"
 API_FETCH_LIMIT = 5000  # Maximum records per API request
 DEFAULT_RECORD_COUNT = 100
 

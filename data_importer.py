@@ -49,16 +49,6 @@ class DataImporter:
                     locale = sys_locale.getdefaultlocale()[0][:2] if sys_locale.getdefaultlocale()[0] else 'en'
                 except:
                     locale = 'en'
-        locale_path = os.path.join(
-            self.plugin_dir,
-            'i18n',
-            f'DataImporter_{locale}.ts'
-        )
-        
-        if os.path.exists(locale_path):
-            self.translator = QTranslator()
-            self.translator.load(locale_path)
-            QCoreApplication.installTranslator(self.translator)
 
         # Initialize components
         self.actions = []

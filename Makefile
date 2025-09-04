@@ -38,15 +38,15 @@ LOCALES =
 # translation
 SOURCES = \
 	__init__.py \
-	data_importer.py data_importer_dialog.py
+	data_importer.py
 
 PLUGINNAME = data_importer
 
 PY_FILES = \
 	__init__.py \
-	data_importer.py data_importer_dialog.py
+	data_importer.py
 
-UI_FILES = data_importer_dialog_base.ui
+UI_FILES = 
 
 EXTRAS = metadata.txt icon.png
 
@@ -71,7 +71,6 @@ QGISDIR=/Users/itachi/Library/Application Support/QGIS/QGIS3/profiles/default/py
 # Normally you would not need to edit below here
 #################################################
 
-HELP = help/build/html
 
 PLUGIN_UPLOAD = $(c)/plugin_upload.py
 
@@ -125,8 +124,6 @@ deploy: compile doc transcompile
 	cp -vf $(UI_FILES) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
 	cp -vf $(COMPILED_RESOURCE_FILES) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
 	cp -vf $(EXTRAS) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	cp -vfr i18n $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	cp -vfr $(HELP) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)/help
 	# Copy extra directories if any
 	(foreach EXTRA_DIR,(EXTRA_DIRS), cp -R (EXTRA_DIR) (HOME)/(QGISDIR)/python/plugins/(PLUGINNAME)/;)
 
@@ -185,23 +182,18 @@ transup:
 	@echo "------------------------------------------------"
 	@echo "Updating translation files with any new strings."
 	@echo "------------------------------------------------"
-	@chmod +x scripts/update-strings.sh
-	@scripts/update-strings.sh $(LOCALES)
 
 transcompile:
 	@echo
 	@echo "----------------------------------------"
 	@echo "Compiled translation files to .qm files."
 	@echo "----------------------------------------"
-	@chmod +x scripts/compile-strings.sh
-	@scripts/compile-strings.sh $(LRELEASE) $(LOCALES)
 
 transclean:
 	@echo
 	@echo "------------------------------------"
 	@echo "Removing compiled translation files."
 	@echo "------------------------------------"
-	rm -f i18n/*.qm
 
 clean:
 	@echo
@@ -215,7 +207,6 @@ doc:
 	@echo "------------------------------------"
 	@echo "Building documentation using sphinx."
 	@echo "------------------------------------"
-	cd help; make html
 
 pylint:
 	@echo

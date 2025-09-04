@@ -7,45 +7,26 @@ import os
 from pathlib import Path
 from typing import Optional
 from qgis.PyQt.QtCore import QSettings
+from .constants import NEEDLE_FIREBASE_API_KEY, NEEDLE_BASE_API_URL
 
 class Config:
     """Central configuration class for the plugin."""
     
     def __init__(self):
-        self._config_file = Path(__file__).parent / "secrets.env"
         self._load_config()
     
     def _load_config(self):
-        """Load configuration from environment variables or config file."""
+        """Load configuration from environment variables or constants."""
         # Try to load from environment variables first (for production)
-        self.FIREBASE_API_KEY = os.getenv("NEEDLE_FIREBASE_API_KEY")
-        self.BASE_API_URL = os.getenv("NEEDLE_BASE_API_URL")
-        
-        # If not found in env vars, try to load from config file (for development)
-        if not self.FIREBASE_API_KEY and self._config_file.exists():
-            self._load_from_file()
+        self.FIREBASE_API_KEY = os.getenv("NEEDLE_FIREBASE_API_KEY") or NEEDLE_FIREBASE_API_KEY
+        self.BASE_API_URL = os.getenv("NEEDLE_BASE_API_URL") or NEEDLE_BASE_API_URL
         
         # Validate required configuration
         if not self.FIREBASE_API_KEY:
             raise ValueError(
-                "Firebase API Key not found. Please set NEEDLE_FIREBASE_API_KEY environment variable "
-                "or create secrets.env file in src/config/ directory"
+                "Firebase API Key not found. Please set NEEDLE_FIREBASE_API_KEY environment variable"
             )
     
-    def _load_from_file(self):
-        """Load configuration from secrets.env file."""
-        try:
-            with open(self._config_file, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        key, value = line.split('=', 1)
-                        if key.strip() == "NEEDLE_FIREBASE_API_KEY":
-                            self.FIREBASE_API_KEY = value.strip().strip('"\'')
-                        elif key.strip() == "NEEDLE_BASE_API_URL":
-                            self.BASE_API_URL = value.strip().strip('"\'')
-        except Exception as e:
-            print(f"Warning: Could not load config file: {e}")
     
     @property
     def firebase_auth_url(self) -> str:
