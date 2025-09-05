@@ -9,7 +9,7 @@ from qgis.PyQt.QtWidgets import (
     QStackedLayout, QComboBox, QCheckBox
 )
 from qgis.PyQt.QtGui import QFont
-from qgis.PyQt.QtCore import Qt, pyqtSignal
+from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer
 
 from .components import (
     DynamicSearchFilterWidget, StaticFilterWidget, LoginDialog, LayerOptionsDialog
@@ -31,6 +31,7 @@ class DataImporterDialog(QDialog):
     page_next_requested = pyqtSignal(str)  # tab_name
     page_previous_requested = pyqtSignal(str)  # tab_name
     cancel_request_requested = pyqtSignal()  # Cancel API request
+    company_search_requested = pyqtSignal(str)  # company search query
     
     def __init__(self, parent=None):
         super(DataImporterDialog, self).__init__(parent)
@@ -39,6 +40,12 @@ class DataImporterDialog(QDialog):
         
         # Track loading state for each tab
         self._loading_states = {'Holes': False, 'Assays': False}
+        
+        # Company search timer for debouncing
+        self.company_search_timer = QTimer()
+        self.company_search_timer.setSingleShot(True)
+        self.company_search_timer.timeout.connect(self._perform_company_search)
+        self._current_company_query = ""
     
     def _setup_ui(self):
         """Setup the main UI."""
@@ -234,8 +241,17 @@ class DataImporterDialog(QDialog):
         font.setPointSize(12)
         loading_label.setFont(font)
         
+        # No data label
+        no_data_label = QLabel("No data present with given filter.")
+        no_data_label.setAlignment(Qt.AlignCenter)
+        no_data_font = no_data_label.font()
+        no_data_font.setPointSize(12)
+        no_data_label.setFont(no_data_font)
+        no_data_label.setStyleSheet("color: #666666; font-style: italic;")
+        
         content_stack.addWidget(table)
         content_stack.addWidget(loading_label)
+        content_stack.addWidget(no_data_label)
         content_stack.setCurrentWidget(loading_label)
         
         layout.addLayout(content_stack)
@@ -243,6 +259,7 @@ class DataImporterDialog(QDialog):
         widgets.update({
             'table': table,
             'loading_label': loading_label,
+            'no_data_label': no_data_label,
             'content_stack': content_stack
         })
         
@@ -354,6 +371,9 @@ class DataImporterDialog(QDialog):
         self.holes_tab['next_button'].clicked.connect(lambda: self.page_next_requested.emit("Holes"))
         self.assays_tab['prev_button'].clicked.connect(lambda: self.page_previous_requested.emit("Assays"))
         self.assays_tab['next_button'].clicked.connect(lambda: self.page_next_requested.emit("Assays"))
+        
+        # Company search
+        self.holes_tab['company_filter'].textChanged.connect(self._on_company_search_text_changed)
     
     def _handle_login_button(self):
         """Handle login/logout button click."""
@@ -457,22 +477,16 @@ class DataImporterDialog(QDialog):
     
     def show_data(self, tab_name: str, data: list, headers: list, pagination_info: dict):
         """Show data in the specified tab with pagination info."""
-        # Debug logging
-        print(f"[DEBUG] show_data called: tab_name={tab_name}, data_length={len(data)}, headers={headers}")
-        print(f"[DEBUG] pagination_info: {pagination_info}")
-        if data:
-            print(f"[DEBUG] First record: {data[0] if data else 'None'}")
-        
         tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
         
         # Check if we're currently in loading state
         # If so, don't switch away from loading view unless we have data
         if self._loading_states[tab_name] and not data:
-            print(f"[DEBUG] Ignoring show_data with empty data while loading for {tab_name}")
             return
         
         table = tab_widgets['table']
         loading_label = tab_widgets['loading_label']
+        no_data_label = tab_widgets['no_data_label']
         content_stack = tab_widgets['content_stack']
         import_button = tab_widgets['import_button']
         pagination_widget = tab_widgets['pagination_widget']
@@ -526,8 +540,8 @@ class DataImporterDialog(QDialog):
                 prev_button.setEnabled(False)
                 next_button.setEnabled(False)
         else:
-            loading_label.setText("No data to display.")
-            content_stack.setCurrentWidget(loading_label)
+            # Show no data message when no results are returned
+            content_stack.setCurrentWidget(no_data_label)
             import_button.setVisible(False)
             pagination_widget.setVisible(False)
     
@@ -711,3 +725,21 @@ class DataImporterDialog(QDialog):
         # Reset record count and fetch all checkbox
         assays_tab['count_input'].setText("100")
         assays_tab['fetch_all_checkbox'].setChecked(False)
+    
+    def _on_company_search_text_changed(self, text: str):
+        """Handle company search text changes with debouncing."""
+        self._current_company_query = text
+        # Restart the timer on each text change (debouncing)
+        self.company_search_timer.stop()
+        self.company_search_timer.start(500)  # 500ms delay
+    
+    def _perform_company_search(self):
+        """Perform the actual company search."""
+        query = self._current_company_query.strip()
+        self.company_search_requested.emit(query)
+    
+    def handle_company_search_results(self, results: list):
+        """Handle company search results from the API."""
+        # Show results in the company filter popup
+        if hasattr(self.holes_tab['company_filter'], 'showPopup'):
+            self.holes_tab['company_filter'].showPopup(results)

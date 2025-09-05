@@ -26,6 +26,7 @@ class DataManager(QObject):
     error_occurred = pyqtSignal(str)  # Error message
     loading_started = pyqtSignal(str)  # tab_name - Emitted when loading starts
     loading_finished = pyqtSignal(str)  # tab_name - Emitted when loading ends
+    companies_search_results = pyqtSignal(list)  # List of company search results
     
     def __init__(self):
         super().__init__()
@@ -339,7 +340,7 @@ class DataManager(QObject):
             
             # Update UI
             self.progress_changed.emit(100)
-            self.status_changed.emit(f"Data fetch complete. {record_count} records in {fetch_time:.1f}s")
+            self.status_changed.emit(f"Data fetch complete: {record_count} records in {fetch_time:.1f}s")
             
             # Emit data ready signal with pagination info
             pagination_info = self._get_pagination_info(tab_name)
@@ -477,3 +478,64 @@ class DataManager(QObject):
         state = self.tab_states[tab_name]
         current_page = state['current_page'] + 1  # Convert to 1-based
         self.navigate_to_page(tab_name, current_page - 1)
+    
+    def search_companies(self, company_name: str) -> None:
+        """
+        Search for companies by name.
+        
+        Args:
+            company_name: Company name search query (minimum 3 characters)
+        """
+        if not self.is_authenticated():
+            logger.warning("Cannot search companies - user not authenticated")
+            return
+        
+        if not company_name or len(company_name.strip()) < 3:
+            # Clear search results for short queries
+            self.companies_search_results.emit([])
+            return
+        
+        search_params = {'company_name': company_name.strip()}
+        
+        logger.info(f"Searching companies with query: {company_name}")
+        
+        self.api_client.make_api_request(
+            API_ENDPOINTS['companies_search'],
+            search_params,
+            self._handle_companies_search_response
+        )
+    
+    def _handle_companies_search_response(self, response_data) -> None:
+        """Handle the response from companies search API."""
+        try:
+            # Handle both dict and list responses
+            if isinstance(response_data, list):
+                # Direct list response (most common case)
+                companies = response_data
+            elif isinstance(response_data, dict):
+                # Dict response with companies key
+                companies = response_data.get('companies', [])
+            else:
+                logger.warning(f"Unexpected response type: {type(response_data)}")
+                companies = []
+            
+            # Convert to list of (display_name, value) tuples expected by DynamicSearchFilterWidget
+            company_results = []
+            for company in companies:
+                if isinstance(company, dict):
+                    # If company is a dict with name field
+                    company_name = company.get('name', str(company))
+                else:
+                    # If company is just a string
+                    company_name = str(company)
+                
+                company_results.append((company_name, company_name))
+            
+            logger.info(f"Found {len(company_results)} companies")
+            self.companies_search_results.emit(company_results)
+            
+        except Exception as e:
+            error_msg = f"Failed to process companies search response: {e}"
+            logger.error(error_msg)
+            # Emit empty results on error
+            self.companies_search_results.emit([])

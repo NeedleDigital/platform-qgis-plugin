@@ -176,6 +176,9 @@ class DataImporter:
         self.dlg.page_next_requested.connect(self._handle_page_next)
         self.dlg.page_previous_requested.connect(self._handle_page_previous)
         
+        # Company search operations
+        self.dlg.company_search_requested.connect(self._handle_company_search_request)
+        
         # Data manager signals
         self.data_manager.status_changed.connect(self.dlg.update_status)
         self.data_manager.progress_changed.connect(self.dlg.update_progress)
@@ -185,6 +188,7 @@ class DataImporter:
         self.data_manager.error_occurred.connect(self.dlg.hide_cancel_button)  # Hide cancel button on error
         self.data_manager.loading_started.connect(self.dlg.show_loading)  # Show loading state
         self.data_manager.loading_finished.connect(self.dlg.hide_loading)  # Hide loading state
+        self.data_manager.companies_search_results.connect(self.dlg.handle_company_search_results)  # Company search results
         
         # API client signals
         self.data_manager.api_client.login_success.connect(self._handle_login_success)
@@ -382,3 +386,13 @@ class DataImporter:
             error_msg = f"Page navigation error: {str(e)}"
             logger.error(error_msg)
             self.dlg.show_error(error_msg)
+    
+    def _handle_company_search_request(self, query: str):
+        """Handle company search request."""
+        try:
+            logger.info(f"Company search requested: '{query}'")
+            self.data_manager.search_companies(query)
+        except Exception as e:
+            error_msg = f"Company search error: {str(e)}"
+            logger.error(error_msg)
+            # Don't show error to user for search failures, just log them

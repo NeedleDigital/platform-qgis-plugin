@@ -66,7 +66,8 @@ API_ENDPOINTS = {
     'holes_count': 'plugin/fetch_dh_count',
     'holes_data': 'plugin/fetch_drill_holes',
     'assays_count': 'plugin/fetch_assay_count',
-    'assays_data': 'plugin/fetch_assay_samples'
+    'assays_data': 'plugin/fetch_assay_samples',
+    'companies_search': 'companies/search'
 }
 
 # UI Configuration

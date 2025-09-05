@@ -285,7 +285,7 @@ class ApiClient(QObject):
             # Emit login_failed signal to update UI
             self.login_failed.emit(f"Token refresh error: {e}")
     
-    def _handle_api_response(self, endpoint: str, response_data: Dict[str, Any], 
+    def _handle_api_response(self, endpoint: str, response_data, 
                            callback: Optional[Callable] = None) -> None:
         """Handle API response from Needle Digital service."""
         logger.info(f"API response received for endpoint: {endpoint}")
@@ -293,4 +293,9 @@ class ApiClient(QObject):
         if callback:
             callback(response_data)
         
-        self.api_response_received.emit(endpoint, response_data)
+        # Only emit the signal if response_data is a dictionary
+        # Some endpoints (like companies search) return lists directly
+        if isinstance(response_data, dict):
+            self.api_response_received.emit(endpoint, response_data)
+        else:
+            logger.info(f"Skipping signal emission for endpoint {endpoint} - response is not a dict")
