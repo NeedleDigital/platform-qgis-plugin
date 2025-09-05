@@ -101,8 +101,8 @@ UI_CONFIG = {
 # Validation messages
 VALIDATION_MESSAGES = {
     'auth_required': 'You must be logged in to fetch data.',
-    'fetch_all_no_state': 'To fetch all records, you can select no states or exactly one state.',
-    'fetch_all_multiple_states': 'To fetch all records, you must select no states or exactly one state. Please deselect some states.',
+    'fetch_all_no_state': 'Currenlty our plugin support fetching all data state-wise. Please select 1 state for which you want all data.',
+    'fetch_all_multiple_states': 'Currenlty our plugin support fetching all data state-wise. Please select 1 state for which you want all data.',
     'invalid_credentials': 'A valid email and password are required.',
     'network_error': 'Network error occurred. Please check your connection and try again.',
     'api_error': 'API request failed. Please try again later.',

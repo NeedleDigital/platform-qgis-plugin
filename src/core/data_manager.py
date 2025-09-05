@@ -24,6 +24,8 @@ class DataManager(QObject):
     progress_changed = pyqtSignal(int)  # Progress percentage
     data_ready = pyqtSignal(str, list, list, dict)  # tab_name, data, headers, pagination_info
     error_occurred = pyqtSignal(str)  # Error message
+    loading_started = pyqtSignal(str)  # tab_name - Emitted when loading starts
+    loading_finished = pyqtSignal(str)  # tab_name - Emitted when loading ends
     
     def __init__(self):
         super().__init__()
@@ -56,10 +58,35 @@ class DataManager(QObject):
         # Batch fetching state
         self.batch_fetch_status = None
         self.fetch_start_time = 0
+        self._is_fetching = False  # Track if currently fetching data
     
     def is_authenticated(self) -> bool:
         """Check if user is authenticated."""
         return self.api_client.is_authenticated()
+    
+    def cancel_request(self) -> None:
+        """Cancel any ongoing API requests and reset state."""
+        if not self._is_fetching:
+            return
+        
+        logger.info("Cancelling API requests...")
+        
+        # Cancel all active network requests
+        self.api_client.cancel_all_requests()
+        
+        # Reset batch fetching state
+        self.batch_fetch_status = None
+        self._is_fetching = False
+        
+        # Reset progress and status
+        self.progress_changed.emit(0)
+        self.status_changed.emit("Request cancelled by user.")
+        
+        # Emit loading finished signal for both tabs since we cancelled all requests
+        self.loading_finished.emit("Holes")
+        self.loading_finished.emit("Assays")
+        
+        logger.info("API requests cancelled successfully")
     
     def fetch_data(self, tab_name: str, filter_params: Dict[str, Any], 
                    fetch_all: bool = False) -> None:
@@ -78,8 +105,14 @@ class DataManager(QObject):
         # Store filter parameters
         self.tab_states[tab_name]['filter_params'] = filter_params.copy()
         
+        # Emit loading started signal
+        self.loading_started.emit(tab_name)
+        
         # Clear existing data
         self._clear_tab_data(tab_name)
+        
+        # Set fetching state
+        self._is_fetching = True
         
         # Start timing
         self.fetch_start_time = time.time()
@@ -94,6 +127,8 @@ class DataManager(QObject):
             
             is_valid, error_msg = validate_fetch_all_request(selected_states)
             if not is_valid:
+                self._is_fetching = False
+                self.loading_finished.emit(tab_name)
                 self.error_occurred.emit(error_msg)
                 return
             
@@ -142,6 +177,8 @@ class DataManager(QObject):
                 self.status_changed.emit("No records found matching your criteria.")
                 pagination_info = self._get_pagination_info(tab_name)
                 self.data_ready.emit(tab_name, [], [], pagination_info)
+                self._is_fetching = False
+                self.loading_finished.emit(tab_name)
                 return
             
             # Determine how many records to fetch
@@ -160,6 +197,8 @@ class DataManager(QObject):
             error_msg = f"Failed to process count response: {e}"
             logger.error(error_msg)
             self.error_occurred.emit(error_msg)
+            self._is_fetching = False
+            self.loading_finished.emit(tab_name)
     
     def _start_sequential_fetch(self, tab_name: str, records_to_fetch: int) -> None:
         """Start the sequential data fetching process."""
@@ -262,7 +301,19 @@ class DataManager(QObject):
             error_msg = f"Failed to process chunk response: {e}"
             logger.error(error_msg)
             self.error_occurred.emit(error_msg)
+            
+            # Get tab_name before clearing batch_fetch_status
+            tab_name = self.batch_fetch_status['tab_name'] if self.batch_fetch_status else None
+            
             self.batch_fetch_status = None
+            self._is_fetching = False
+            
+            if tab_name:
+                self.loading_finished.emit(tab_name)
+            else:
+                # Emit for both tabs as fallback
+                self.loading_finished.emit("Holes")
+                self.loading_finished.emit("Assays")
     
     def _finalize_data_fetch(self) -> None:
         """Finalize the data fetching process."""
@@ -301,6 +352,9 @@ class DataManager(QObject):
             self.error_occurred.emit(error_msg)
         finally:
             self.batch_fetch_status = None
+            self._is_fetching = False
+            # Emit loading finished signal
+            self.loading_finished.emit(tab_name)
     
     def get_tab_data(self, tab_name: str) -> tuple:
         """Get data and headers for a tab."""
@@ -322,7 +376,8 @@ class DataManager(QObject):
             'data': [],
             'headers': [],
             'total_records': 0,
-            'current_page': 0
+            'current_page': 0,
+            'filter_params': {}
         })
     
     def _handle_api_response(self, endpoint: str, response_data: Dict[str, Any]) -> None:
@@ -339,8 +394,13 @@ class DataManager(QObject):
         if self.batch_fetch_status:
             self.batch_fetch_status = None
         
+        self._is_fetching = False
         self.progress_changed.emit(0)
         self.status_changed.emit("Ready for next request.")
+        
+        # Emit loading finished signal for both tabs since we don't know which one failed
+        self.loading_finished.emit("Holes")
+        self.loading_finished.emit("Assays")
     
     def _get_pagination_info(self, tab_name: str) -> dict:
         """Calculate pagination information for a tab (table-based pagination, 100 records per page)."""

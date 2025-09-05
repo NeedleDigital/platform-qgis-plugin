@@ -30,11 +30,15 @@ class DataImporterDialog(QDialog):
     data_import_requested = pyqtSignal(str, str, object)  # tab_name, layer_name, color
     page_next_requested = pyqtSignal(str)  # tab_name
     page_previous_requested = pyqtSignal(str)  # tab_name
+    cancel_request_requested = pyqtSignal()  # Cancel API request
     
     def __init__(self, parent=None):
         super(DataImporterDialog, self).__init__(parent)
         self._setup_ui()
         self._connect_signals()
+        
+        # Track loading state for each tab
+        self._loading_states = {'Holes': False, 'Assays': False}
     
     def _setup_ui(self):
         """Setup the main UI."""
@@ -96,6 +100,7 @@ class DataImporterDialog(QDialog):
         self.tabs.addTab(self.assays_tab['widget'], "Assays")
         
         self.main_layout.addWidget(self.tabs)
+        
     
     def _create_data_tab(self, tab_type: str) -> dict:
         """Create a data tab (Holes or Assays)."""
@@ -270,36 +275,57 @@ class DataImporterDialog(QDialog):
         action_layout = QHBoxLayout()
         action_layout.addStretch()
         
-        clear_button = QPushButton("Clear Filters & Data")
-        clear_button.setDefault(False)
-        clear_button.setAutoDefault(False)
-        
         import_button = QPushButton("Import All Data to QGIS")
         import_button.setDefault(False)
         import_button.setAutoDefault(False)
         import_button.setVisible(False)  # Hidden until data is available
         
-        action_layout.addWidget(clear_button)
         action_layout.addWidget(import_button)
         layout.addLayout(action_layout)
         
         widgets.update({
-            'clear_button': clear_button,
             'import_button': import_button
         })
         
         return widgets
     
     def _create_status_bar(self):
-        """Create the status bar."""
+        """Create the status bar with cancel button."""
         status_layout = QHBoxLayout()
         
         self.status_label = QLabel(UI_CONFIG['status_messages']['ready'])
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         
+        # Create cancel button
+        self.cancel_button = QPushButton("Cancel Request")
+        self.cancel_button.setDefault(False)
+        self.cancel_button.setAutoDefault(False)
+        self.cancel_button.setVisible(False)  # Hidden by default
+        
+        # Style the button to make it smaller and fit in status bar
+        self.cancel_button.setStyleSheet("""
+            QPushButton {
+                background-color: #f44336;
+                color: white;
+                font-weight: normal;
+                padding: 4px 8px;
+                border: none;
+                border-radius: 3px;
+                font-size: 10px;
+                max-height: 20px;
+            }
+            QPushButton:hover {
+                background-color: #d32f2f;
+            }
+            QPushButton:pressed {
+                background-color: #b71c1c;
+            }
+        """)
+        
         status_layout.addWidget(self.status_label)
         status_layout.addWidget(self.progress_bar)
+        status_layout.addWidget(self.cancel_button)
         
         self.main_layout.addLayout(status_layout)
     
@@ -309,13 +335,13 @@ class DataImporterDialog(QDialog):
         self.login_button.clicked.connect(self._handle_login_button)
         self.reset_all_button.clicked.connect(self._handle_reset_all)
         
+        # Cancel button
+        self.cancel_button.clicked.connect(self.cancel_request_requested.emit)
+        
         # Fetch buttons
         self.holes_tab['fetch_button'].clicked.connect(lambda: self._handle_fetch_request("Holes"))
         self.assays_tab['fetch_button'].clicked.connect(lambda: self._handle_fetch_request("Assays"))
         
-        # Clear buttons
-        self.holes_tab['clear_button'].clicked.connect(lambda: self._handle_clear_request("Holes"))
-        self.assays_tab['clear_button'].clicked.connect(lambda: self._handle_clear_request("Assays"))
         
         # Import buttons
         self.holes_tab['import_button'].clicked.connect(lambda: self._handle_import_request("Holes"))
@@ -335,9 +361,13 @@ class DataImporterDialog(QDialog):
             self.logout_requested.emit()
     
     def _handle_reset_all(self):
-        """Handle reset all button click."""
-        self._handle_clear_request("Holes")
-        self._handle_clear_request("Assays")
+        """Handle reset all button click - clear all data and filters."""
+        # Clear all data from memory via DataManager
+        self.data_clear_requested.emit("Holes")
+        self.data_clear_requested.emit("Assays")
+        
+        # Reset all filter inputs to default values
+        self._reset_all_filters()
     
     def _handle_fetch_request(self, tab_name: str):
         """Handle data fetch request."""
@@ -383,9 +413,6 @@ class DataImporterDialog(QDialog):
         # Emit request signal
         self.data_fetch_requested.emit(tab_name, params, fetch_all)
     
-    def _handle_clear_request(self, tab_name: str):
-        """Handle data clear request."""
-        self.data_clear_requested.emit(tab_name)
     
     def _handle_import_request(self, tab_name: str):
         """Handle data import request."""
@@ -432,6 +459,12 @@ class DataImporterDialog(QDialog):
             print(f"[DEBUG] First record: {data[0] if data else 'None'}")
         
         tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
+        
+        # Check if we're currently in loading state
+        # If so, don't switch away from loading view unless we have data
+        if self._loading_states[tab_name] and not data:
+            print(f"[DEBUG] Ignoring show_data with empty data while loading for {tab_name}")
+            return
         
         table = tab_widgets['table']
         loading_label = tab_widgets['loading_label']
@@ -500,3 +533,169 @@ class DataImporterDialog(QDialog):
     def show_info(self, message: str):
         """Show information message."""
         QMessageBox.information(self, "Information", message)
+    
+    def show_cancel_button(self):
+        """Show the cancel request button during API calls."""
+        self.cancel_button.setVisible(True)
+    
+    def hide_cancel_button(self):
+        """Hide the cancel request button when not making API calls."""
+        self.cancel_button.setVisible(False)
+    
+    def show_loading(self, tab_name: str):
+        """Show loading state for the specified tab."""
+        self._loading_states[tab_name] = True
+        
+        tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
+        
+        loading_label = tab_widgets['loading_label']
+        content_stack = tab_widgets['content_stack']
+        import_button = tab_widgets['import_button']
+        pagination_widget = tab_widgets['pagination_widget']
+        fetch_button = tab_widgets['fetch_button']
+        
+        # Clear any previous data from memory and UI
+        table = tab_widgets['table']
+        table.setRowCount(0)
+        table.setColumnCount(0)
+        
+        # Show loading state
+        loading_label.setText("Loading data...")
+        content_stack.setCurrentWidget(loading_label)
+        
+        # Hide other components during loading
+        import_button.setVisible(False)
+        pagination_widget.setVisible(False)
+        
+        # Disable fetch button to prevent multiple requests
+        fetch_button.setEnabled(False)
+        
+        # Disable all UI controls during loading
+        self._disable_all_controls()
+    
+    def hide_loading(self, tab_name: str):
+        """Hide loading state and re-enable fetch button for the specified tab."""
+        self._loading_states[tab_name] = False
+        
+        tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
+        fetch_button = tab_widgets['fetch_button']
+        loading_label = tab_widgets['loading_label']
+        content_stack = tab_widgets['content_stack']
+        
+        # Re-enable fetch button
+        fetch_button.setEnabled(True)
+        
+        # Restore original waiting message
+        loading_label.setText("Waiting for data...")
+        
+        # Only show waiting message if there's no data in the table
+        table = tab_widgets['table']
+        if table.rowCount() == 0:
+            content_stack.setCurrentWidget(loading_label)
+        
+        # Re-enable all UI controls after loading
+        self._enable_all_controls()
+    
+    def _disable_all_controls(self):
+        """Disable all UI controls during API requests except cancel button."""
+        # Disable tab switching
+        self.tabs.setEnabled(False)
+        
+        # Disable header buttons
+        self.login_button.setEnabled(False)
+        self.reset_all_button.setEnabled(False)
+        
+        # Disable all controls in both tabs
+        for tab_name in ['Holes', 'Assays']:
+            tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
+            
+            # Disable filter controls
+            tab_widgets['state_filter'].setEnabled(False)
+            
+            if tab_name == "Holes":
+                tab_widgets['company_filter'].setEnabled(False)
+                tab_widgets['count_input'].setEnabled(False)
+                tab_widgets['fetch_all_checkbox'].setEnabled(False)
+            else:  # Assays
+                tab_widgets['element_input'].setEnabled(False)
+                tab_widgets['operator_input'].setEnabled(False)
+                tab_widgets['value_input'].setEnabled(False)
+                tab_widgets['count_input'].setEnabled(False)
+                tab_widgets['fetch_all_checkbox'].setEnabled(False)
+            
+            # Disable pagination and import buttons
+            tab_widgets['prev_button'].setEnabled(False)
+            tab_widgets['next_button'].setEnabled(False)
+            tab_widgets['import_button'].setEnabled(False)
+    
+    def _enable_all_controls(self):
+        """Re-enable all UI controls after API requests complete."""
+        # Re-enable tab switching
+        self.tabs.setEnabled(True)
+        
+        # Re-enable header buttons
+        self.login_button.setEnabled(True)
+        self.reset_all_button.setEnabled(True)
+        
+        # Re-enable all controls in both tabs
+        for tab_name in ['Holes', 'Assays']:
+            tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
+            
+            # Re-enable filter controls
+            tab_widgets['state_filter'].setEnabled(True)
+            
+            if tab_name == "Holes":
+                tab_widgets['company_filter'].setEnabled(True)
+                # Only enable count input if fetch all checkbox is not checked
+                fetch_all_checked = tab_widgets['fetch_all_checkbox'].isChecked()
+                tab_widgets['count_input'].setEnabled(not fetch_all_checked)
+                tab_widgets['fetch_all_checkbox'].setEnabled(True)
+            else:  # Assays
+                tab_widgets['element_input'].setEnabled(True)
+                tab_widgets['operator_input'].setEnabled(True)
+                # Check if value input should be enabled based on operator
+                operator_text = tab_widgets['operator_input'].currentText()
+                tab_widgets['value_input'].setEnabled(operator_text != "None")
+                # Only enable count input if fetch all checkbox is not checked
+                fetch_all_checked = tab_widgets['fetch_all_checkbox'].isChecked()
+                tab_widgets['count_input'].setEnabled(not fetch_all_checked)
+                tab_widgets['fetch_all_checkbox'].setEnabled(True)
+            
+            # Note: fetch buttons are handled individually in hide_loading()
+            # Note: pagination and import buttons are handled by show_data() based on data availability
+    
+    def _reset_all_filters(self):
+        """Reset all filter inputs to their default values."""
+        # Reset Holes tab filters
+        holes_tab = self.holes_tab
+        
+        # Reset state filter to "All States" (first item, empty value)
+        holes_tab['state_filter'].setCurrentData([""])
+        
+        # Reset company filter
+        holes_tab['company_filter'].setCurrentData([])
+        holes_tab['company_filter'].search_box.clear()
+        
+        # Reset record count and fetch all checkbox
+        holes_tab['count_input'].setText("100")
+        holes_tab['fetch_all_checkbox'].setChecked(False)
+        
+        # Reset Assays tab filters  
+        assays_tab = self.assays_tab
+        
+        # Reset state filter to "All States" (first item, empty value)
+        assays_tab['state_filter'].setCurrentData([""])
+        
+        # Reset element to first item (index 0)
+        assays_tab['element_input'].setCurrentIndex(0)
+        
+        # Reset operator to "None" (index 0)
+        assays_tab['operator_input'].setCurrentIndex(0)
+        
+        # Clear and disable value input
+        assays_tab['value_input'].clear()
+        assays_tab['value_input'].setEnabled(False)
+        
+        # Reset record count and fetch all checkbox
+        assays_tab['count_input'].setText("100")
+        assays_tab['fetch_all_checkbox'].setChecked(False)

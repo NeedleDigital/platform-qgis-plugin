@@ -32,6 +32,7 @@ class ApiClient(QObject):
         self.refresh_token: Optional[str] = None
         self.token_expires_at: float = 0
         self._initialization_complete = False
+        self._active_replies = []  # Track active network requests for cancellation
         
         # Token refresh timer
         self.token_refresh_timer = QTimer()
@@ -89,6 +90,17 @@ class ApiClient(QObject):
         # Clear stored refresh token
         settings = QgsSettings()
         settings.remove("needle/refreshToken")
+        
+        # Cancel any ongoing requests
+        self.cancel_all_requests()
+    
+    def cancel_all_requests(self) -> None:
+        """Cancel all active network requests."""
+        for reply in self._active_replies:
+            if reply and not reply.isFinished():
+                reply.abort()
+                logger.info("Cancelled active network request")
+        self._active_replies.clear()
     
     def refresh_auth_token(self, silent: bool = False) -> None:
         """Refresh the authentication token using refresh token."""
@@ -165,6 +177,9 @@ class ApiClient(QObject):
         else:
             reply = self.network_manager.get(request)
         
+        # Track the reply for cancellation
+        self._active_replies.append(reply)
+        
         # Connect response handler
         reply.finished.connect(lambda: self._handle_network_reply(reply, callback, error_callback))
     
@@ -172,6 +187,10 @@ class ApiClient(QObject):
                              callback: Optional[Callable] = None,
                              error_callback: Optional[Callable] = None) -> None:
         """Handle network reply with proper error checking."""
+        # Remove from active replies list
+        if reply in self._active_replies:
+            self._active_replies.remove(reply)
+        
         try:
             if reply.error() != QNetworkReply.NoError:
                 error_msg = reply.errorString()

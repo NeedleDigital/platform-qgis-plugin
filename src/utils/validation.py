@@ -4,6 +4,7 @@ Validation utilities for the Needle Digital Mining Data Importer plugin.
 
 import re
 from typing import List, Optional, Tuple, Any, Dict
+from ..config.constants import VALIDATION_MESSAGES
 
 def validate_email(email: str) -> bool:
     """
@@ -30,14 +31,14 @@ def validate_fetch_all_request(selected_states: List[str]) -> Tuple[bool, Option
         Tuple of (is_valid, error_message)
     """
     if len(selected_states) == 0:
-        # No states selected is allowed for fetch all (will fetch from all states)
-        return True, None
+        # No states selected is not allowed for fetch all
+        return False, VALIDATION_MESSAGES['fetch_all_no_state']
     elif len(selected_states) == 1:
         # Single state is allowed
         return True, None
     else:
         # Multiple states not allowed for fetch all
-        return False, "To fetch all records, you must select no states or exactly one state."
+        return False, VALIDATION_MESSAGES['fetch_all_multiple_states']
 
 def validate_assay_filter(element: str, operator: str, value: str) -> Tuple[bool, Optional[str]]:
     """

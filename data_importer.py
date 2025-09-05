@@ -170,6 +170,7 @@ class DataImporter:
         self.dlg.data_fetch_requested.connect(self._handle_data_fetch_request)
         self.dlg.data_clear_requested.connect(self._handle_data_clear_request)
         self.dlg.data_import_requested.connect(self._handle_data_import_request)
+        self.dlg.cancel_request_requested.connect(self._handle_cancel_request)
         
         # Pagination operations
         self.dlg.page_next_requested.connect(self._handle_page_next)
@@ -179,7 +180,11 @@ class DataImporter:
         self.data_manager.status_changed.connect(self.dlg.update_status)
         self.data_manager.progress_changed.connect(self.dlg.update_progress)
         self.data_manager.data_ready.connect(self.dlg.show_data)
+        self.data_manager.data_ready.connect(self.dlg.hide_cancel_button)  # Hide cancel button when data ready
         self.data_manager.error_occurred.connect(self.dlg.show_error)
+        self.data_manager.error_occurred.connect(self.dlg.hide_cancel_button)  # Hide cancel button on error
+        self.data_manager.loading_started.connect(self.dlg.show_loading)  # Show loading state
+        self.data_manager.loading_finished.connect(self.dlg.hide_loading)  # Hide loading state
         
         # API client signals
         self.data_manager.api_client.login_success.connect(self._handle_login_success)
@@ -298,11 +303,14 @@ class DataImporter:
         """Handle data fetch request."""
         try:
             logger.info(f"Data fetch requested for {tab_name}: {params}, fetch_all={fetch_all}")
+            self.dlg.show_cancel_button()  # Show cancel button when starting fetch
             self.data_manager.fetch_data(tab_name, params, fetch_all)
             
         except Exception as e:
             error_msg = f"Data fetch error: {str(e)}"
             logger.error(error_msg)
+            self.dlg.hide_cancel_button()  # Hide cancel button on error
+            self.dlg.hide_loading(tab_name)  # Hide loading state on error
             self.dlg.show_error(error_msg)
 
     def _handle_data_clear_request(self, tab_name):
@@ -342,6 +350,18 @@ class DataImporter:
             
         except Exception as e:
             error_msg = f"Data import error: {str(e)}"
+            logger.error(error_msg)
+            self.dlg.show_error(error_msg)
+    
+    def _handle_cancel_request(self):
+        """Handle cancel request."""
+        try:
+            logger.info("Cancel request received")
+            self.data_manager.cancel_request()
+            self.dlg.hide_cancel_button()
+            
+        except Exception as e:
+            error_msg = f"Cancel request error: {str(e)}"
             logger.error(error_msg)
             self.dlg.show_error(error_msg)
 
