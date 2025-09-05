@@ -1,6 +1,30 @@
 """
-Data management core logic for the Needle Digital Mining Data Importer plugin.
-Handles data fetching, processing, and state management.
+Data Management Core Logic
+
+This module contains the core business logic for the Needle Digital Mining Data
+Importer plugin. It handles all data operations including:
+
+- API communication with the Needle Digital backend
+- Data fetching with pagination support
+- Request validation and parameter management
+- Progress tracking and user feedback
+- Large dataset optimization and chunked processing
+- Company search functionality
+- Tab-based data state management
+
+The DataManager class acts as the central coordinator between the UI layer
+and the API client, implementing the business rules and data flow logic.
+
+Key Features:
+    - Signal-based architecture for loose coupling with UI
+    - Robust error handling and logging
+    - Memory-efficient data processing
+    - Support for large datasets (1M+ records)
+    - Real-time progress tracking
+    - User cancellation support
+
+Author: Needle Digital
+Contact: ahmad@needle-digital.com
 """
 
 import time
@@ -8,25 +32,54 @@ from math import ceil
 from typing import Dict, List, Any, Optional, Callable
 from qgis.PyQt.QtCore import QObject, pyqtSignal
 
-from ..api.client import ApiClient
-from ..config.constants import API_ENDPOINTS, API_FETCH_LIMIT, VALIDATION_MESSAGES
-from ..config.settings import config
-from ..utils.validation import validate_fetch_all_request
-from ..utils.logging import get_logger, log_api_request, log_api_response
+# Internal imports for modular architecture
+from ..api.client import ApiClient  # HTTP client for API communication
+from ..config.constants import API_ENDPOINTS, API_FETCH_LIMIT, VALIDATION_MESSAGES  # Configuration
+from ..config.settings import config  # Application settings
+from ..utils.validation import validate_fetch_all_request  # Request validation
+from ..utils.logging import get_logger, log_api_request, log_api_response  # Logging utilities
 
 logger = get_logger(__name__)
 
 class DataManager(QObject):
-    """Core data management class for handling API requests and data processing."""
+    """Core data management class for handling API requests and data processing.
     
-    # Signals
-    status_changed = pyqtSignal(str)  # Status message
-    progress_changed = pyqtSignal(int)  # Progress percentage
+    This class serves as the central business logic coordinator for the plugin,
+    managing all data operations between the UI and API layers. It implements
+    a signal-based architecture for loose coupling and real-time updates.
+    
+    Responsibilities:
+        - Coordinate API requests for drill hole and assay data
+        - Manage pagination for large datasets
+        - Validate user requests and filter parameters
+        - Track progress and provide status updates
+        - Handle errors and provide user feedback
+        - Manage tab-based data states
+        - Optimize memory usage for large imports
+    
+    Architecture Pattern:
+        Uses Qt's signal/slot pattern for communication with UI components,
+        allowing for asynchronous operations and real-time user feedback
+        without blocking the interface.
+    
+    Signals:
+        status_changed (str): Emitted when operation status changes
+        progress_changed (int): Emitted with progress percentage (0-100)
+        data_ready (str, list, list, dict): Emitted when data is successfully fetched
+        error_occurred (str): Emitted when an error occurs during operations
+        loading_started (str): Emitted when data loading begins for a tab
+        loading_finished (str): Emitted when data loading completes for a tab
+        companies_search_results (list): Emitted with company search results
+    """
+    
+    # Qt Signals for UI communication - enable asynchronous operations
+    status_changed = pyqtSignal(str)  # Status message for user feedback
+    progress_changed = pyqtSignal(int)  # Progress percentage (0-100)
     data_ready = pyqtSignal(str, list, list, dict)  # tab_name, data, headers, pagination_info
-    error_occurred = pyqtSignal(str)  # Error message
-    loading_started = pyqtSignal(str)  # tab_name - Emitted when loading starts
-    loading_finished = pyqtSignal(str)  # tab_name - Emitted when loading ends
-    companies_search_results = pyqtSignal(list)  # List of company search results
+    error_occurred = pyqtSignal(str)  # Error message for user notification
+    loading_started = pyqtSignal(str)  # tab_name - Loading state begins
+    loading_finished = pyqtSignal(str)  # tab_name - Loading state ends
+    companies_search_results = pyqtSignal(list)  # Company search results
     
     def __init__(self):
         super().__init__()

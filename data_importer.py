@@ -1,6 +1,23 @@
 """
 Needle Digital Mining Data Importer - Main Plugin Class
+
 A QGIS plugin for importing Australian mining drill hole and assay data.
+This plugin provides seamless access to Australia's comprehensive mining database,
+allowing geologists, mining engineers, and researchers to import drill hole and
+assay data directly into QGIS for spatial analysis and visualization.
+
+Main Features:
+    - State-wise data filtering for Australian territories
+    - Company-specific data search and filtering
+    - Chemical element analysis for assay data
+    - Large dataset optimization (supports 1M+ records)
+    - Automatic OpenStreetMap base layer integration
+    - Chunked processing with progress tracking
+    - Memory management for performance
+
+Author: Needle Digital
+Contact: ahmad@needle-digital.com
+License: GPL-3.0+
 """
 
 import os
@@ -9,15 +26,15 @@ from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
 from qgis.core import Qgis
 
-# Import modular components
-from .src.core.data_manager import DataManager
-from .src.ui.main_dialog import DataImporterDialog
-from .src.ui.components import (
+# Import modular components for clean architecture
+from .src.core.data_manager import DataManager  # Core business logic and API communication
+from .src.ui.main_dialog import DataImporterDialog  # Main UI dialog window
+from .src.ui.components import (  # Reusable UI components and dialogs
     LoginDialog, LayerOptionsDialog, LargeImportWarningDialog, ImportProgressDialog
 )
-from .src.utils.qgis_helpers import QGISLayerManager
-from .src.utils.logging import get_logger
-from .src.config.constants import (
+from .src.utils.qgis_helpers import QGISLayerManager  # QGIS integration utilities
+from .src.utils.logging import get_logger  # Centralized logging system
+from .src.config.constants import (  # Configuration constants and thresholds
     PLUGIN_NAME, PLUGIN_VERSION, LARGE_IMPORT_WARNING_THRESHOLD, 
     PARTIAL_IMPORT_LIMIT, CHUNKED_IMPORT_THRESHOLD
 )
@@ -25,7 +42,28 @@ from .src.config.constants import (
 logger = get_logger(__name__)
 
 class DataImporter:
-    """Main plugin class for Needle Digital Mining Data Importer."""
+    """Main plugin class for Needle Digital Mining Data Importer.
+    
+    This class serves as the entry point for the QGIS plugin and handles:
+    - Plugin initialization and lifecycle management
+    - QGIS interface integration (toolbar, menus)
+    - Coordination between UI components and business logic
+    - Signal/slot connections for event handling
+    - Dialog management and user interactions
+    
+    The class follows QGIS plugin architecture patterns and implements
+    the standard plugin interface expected by QGIS.
+    
+    Attributes:
+        iface (QgisInterface): Reference to QGIS interface
+        plugin_dir (str): Path to plugin directory
+        actions (list): List of QAction objects for cleanup
+        menu (str): Plugin menu name
+        data_manager (DataManager): Core business logic handler
+        layer_manager (QGISLayerManager): QGIS layer management utilities
+        dlg (DataImporterDialog): Main plugin dialog window
+        login_dlg (LoginDialog): Authentication dialog window
+    """
 
     def __init__(self, iface):
         """
@@ -334,11 +372,30 @@ class DataImporter:
             self.dlg.show_error(error_msg)
 
     def _handle_data_import_request(self, tab_name, layer_name, color):
-        """Handle data import request with large dataset support."""
+        """Handle data import request with intelligent large dataset optimization.
+        
+        This method manages the complete data import workflow including:
+        1. Data validation and retrieval
+        2. Automatic OpenStreetMap base layer addition
+        3. Large dataset detection and user warnings
+        4. Performance optimization through chunked processing
+        5. Memory management for large imports
+        
+        Args:
+            tab_name (str): Source tab name ('Holes' or 'Assays')
+            layer_name (str): Name for the new QGIS layer
+            color (QColor): Color for point styling in the layer
+            
+        The method automatically handles:
+        - Small datasets (<5000 records): Direct import
+        - Medium datasets (5000-50000 records): Chunked import with progress
+        - Large datasets (50000+ records): User warning with import options
+        """
         try:
-            # Get data from data manager
+            # Get data from data manager - includes both data rows and column headers
             data, headers = self.data_manager.get_tab_data(tab_name)
             
+            # Validate that we have data to import
             if not data:
                 self.dlg.show_error("No data available to import.")
                 return
@@ -346,14 +403,16 @@ class DataImporter:
             record_count = len(data)
             logger.info(f"Import requested: {record_count} records to layer '{layer_name}'")
             
-            # Add OpenStreetMap base layer if it doesn't exist
+            # Add OpenStreetMap base layer for geographical context
+            # This provides users with a reference map to visualize their mining data
             osm_success, osm_message = self.layer_manager.add_osm_base_layer()
             if osm_success:
                 logger.info(f"OSM layer: {osm_message}")
             else:
                 logger.warning(f"OSM layer warning: {osm_message}")
             
-            # Check if this is a large dataset that needs special handling
+            # Large dataset detection - warn users about potential performance impact
+            # Threshold defined in constants.py (default: 50,000 records)
             if record_count >= LARGE_IMPORT_WARNING_THRESHOLD:
                 # Show warning dialog
                 warning_dialog = LargeImportWarningDialog(record_count, self.dlg)
