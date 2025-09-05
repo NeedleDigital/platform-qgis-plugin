@@ -4,14 +4,14 @@ QGIS integration utilities for the Needle Digital Mining Data Importer plugin.
 
 from typing import List, Dict, Any, Optional, Tuple
 from qgis.core import (
-    QgsVectorLayer, QgsFeature, QgsGeometry, QgsPoint, QgsField, 
+    QgsVectorLayer, QgsRasterLayer, QgsFeature, QgsGeometry, QgsPoint, QgsField, 
     QgsProject, QgsSymbol, QgsSingleSymbolRenderer, QgsMessageLog,
     Qgis, QgsCoordinateReferenceSystem
 )
 from qgis.PyQt.QtCore import QVariant
 from qgis.PyQt.QtGui import QColor
 
-from ..config.constants import DEFAULT_LAYER_STYLE
+from ..config.constants import DEFAULT_LAYER_STYLE, IMPORT_CHUNK_SIZE, OSM_LAYER_NAME, OSM_LAYER_URL
 from .logging import get_logger
 
 logger = get_logger(__name__)
@@ -200,3 +200,141 @@ class QGISLayerManager:
                 QgsMessageLog.logMessage(f"Needle Digital: {message}", "Plugins", level)
         except Exception as e:
             logger.error(f"Failed to show message: {e}")
+    
+    def add_osm_base_layer(self) -> Tuple[bool, str]:
+        """Add OpenStreetMap base layer if it doesn't already exist."""
+        try:
+            project = QgsProject.instance()
+            
+            # Check if OSM layer already exists
+            existing_layers = project.mapLayersByName(OSM_LAYER_NAME)
+            if existing_layers:
+                logger.info("OpenStreetMap layer already exists, skipping creation")
+                return True, "OpenStreetMap layer already exists"
+            
+            # Create OSM layer
+            osm_layer = QgsRasterLayer(OSM_LAYER_URL, OSM_LAYER_NAME, "wms")
+            
+            if not osm_layer.isValid():
+                error_msg = "Failed to create OpenStreetMap layer"
+                logger.error(error_msg)
+                return False, error_msg
+            
+            # Add layer to project (at the bottom of layer tree)
+            project.addMapLayer(osm_layer, False)  # False = don't add to legend tree yet
+            
+            # Get root layer tree and add as first (bottom) layer
+            root = project.layerTreeRoot()
+            root.insertLayer(0, osm_layer)
+            
+            logger.info("OpenStreetMap base layer added successfully")
+            return True, "OpenStreetMap base layer added successfully"
+            
+        except Exception as e:
+            error_msg = f"Failed to add OpenStreetMap layer: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg
+    
+    def create_point_layer_chunked(self, layer_name: str, data: List[Dict[str, Any]], 
+                                  color: Optional[QColor] = None, 
+                                  progress_callback: Optional[callable] = None) -> Tuple[bool, str]:
+        """
+        Create a point layer from large dataset using chunked processing.
+        
+        Args:
+            layer_name: Name for the new layer
+            data: List of dictionaries containing point data
+            color: Point color (optional)
+            progress_callback: Function to call with progress updates (processed_count, chunk_info)
+            
+        Returns:
+            Tuple of (success, message)
+        """
+        try:
+            if not data:
+                return False, "No data to import"
+            
+            total_records = len(data)
+            logger.info(f"Starting chunked import of {total_records} records")
+            
+            # Create layer with CRS (Australian GDA2020)
+            crs = QgsCoordinateReferenceSystem("EPSG:7844")
+            layer = QgsVectorLayer(f"Point?crs={crs.authid()}", layer_name, "memory")
+            
+            if not layer.isValid():
+                return False, "Failed to create layer"
+            
+            # Get data provider
+            provider = layer.dataProvider()
+            
+            # Define fields based on first record
+            fields = self._create_fields_from_data(data[0])
+            provider.addAttributes(fields)
+            layer.updateFields()
+            
+            # Process data in chunks
+            chunk_size = IMPORT_CHUNK_SIZE
+            processed_count = 0
+            total_features_added = 0
+            
+            for chunk_start in range(0, total_records, chunk_size):
+                chunk_end = min(chunk_start + chunk_size, total_records)
+                chunk_data = data[chunk_start:chunk_end]
+                
+                # Update progress
+                if progress_callback:
+                    chunk_info = f"Processing chunk {chunk_start // chunk_size + 1} of {(total_records + chunk_size - 1) // chunk_size}"
+                    progress_callback(processed_count, chunk_info)
+                
+                # Create features for this chunk
+                chunk_features = []
+                for record in chunk_data:
+                    feature = self._create_feature_from_record(record, layer.fields())
+                    if feature:
+                        chunk_features.append(feature)
+                
+                # Add chunk features to layer
+                if chunk_features:
+                    success = provider.addFeatures(chunk_features)
+                    if success:
+                        total_features_added += len(chunk_features)
+                        logger.info(f"Added chunk {chunk_start // chunk_size + 1}: {len(chunk_features)} features")
+                    else:
+                        logger.warning(f"Failed to add some features in chunk {chunk_start // chunk_size + 1}")
+                
+                processed_count += len(chunk_data)
+                
+                # Update progress after chunk completion
+                if progress_callback:
+                    progress_callback(processed_count, f"Completed chunk {chunk_start // chunk_size + 1}")
+                
+                # Process Qt events to keep UI responsive and check for cancellation
+                from qgis.PyQt.QtWidgets import QApplication
+                QApplication.processEvents()
+                
+                # Force garbage collection to free memory
+                import gc
+                del chunk_features, chunk_data
+                gc.collect()
+            
+            # Finalize layer
+            layer.updateExtents()
+            
+            # Apply styling
+            self._apply_layer_styling(layer, color)
+            
+            # Add to project
+            QgsProject.instance().addMapLayer(layer)
+            
+            # Zoom to layer if interface available (but not for very large datasets)
+            if self.iface and total_features_added < 50000:
+                self.iface.zoomToActiveLayer()
+            
+            success_msg = f"Successfully imported {total_features_added:,} records in {(total_records + chunk_size - 1) // chunk_size} chunks"
+            logger.info(f"Chunked import completed: {success_msg}")
+            return True, success_msg
+            
+        except Exception as e:
+            error_msg = f"Failed to create layer with chunked import: {str(e)}"
+            logger.error(error_msg)
+            return False, error_msg

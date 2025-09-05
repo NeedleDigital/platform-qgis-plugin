@@ -6,12 +6,13 @@ Contains reusable widgets and layouts for the plugin interface.
 from qgis.PyQt.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QLayout, QComboBox,
     QListView, QDialog, QLineEdit, QFormLayout, QDialogButtonBox, QMessageBox,
-    QColorDialog
+    QColorDialog, QProgressDialog
 )
 from qgis.PyQt.QtGui import QFont, QColor, QStandardItemModel, QStandardItem
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize
 
 from ..utils.logging import get_logger
+from ..config.constants import MAX_SAFE_IMPORT, PARTIAL_IMPORT_LIMIT
 
 logger = get_logger(__name__)
 
@@ -530,3 +531,170 @@ class LayerOptionsDialog(QDialog):
     def get_options(self):
         """Get the configured options."""
         return self.layer_name_input.text(), self.selected_color
+
+class LargeImportWarningDialog(QDialog):
+    """Dialog to warn users about large dataset imports."""
+    
+    # Constants for user choices
+    IMPORT_ALL = 1
+    IMPORT_PARTIAL = 2
+    CANCEL = 0
+    
+    def __init__(self, record_count: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Large Dataset Import Warning")
+        self.setModal(True)
+        self.setMinimumWidth(450)
+        
+        self.record_count = record_count
+        self.user_choice = self.CANCEL
+        
+        # Main layout
+        layout = QVBoxLayout(self)
+        
+        # Warning icon and title
+        title_layout = QHBoxLayout()
+        warning_label = QLabel("⚠️")
+        warning_label.setStyleSheet("font-size: 24px;")
+        title_label = QLabel("Large Dataset Import")
+        title_font = QFont()
+        title_font.setPointSize(14)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        
+        title_layout.addWidget(warning_label)
+        title_layout.addWidget(title_label)
+        title_layout.addStretch()
+        layout.addLayout(title_layout)
+        
+        # Warning message
+        message_text = f"""
+You are about to import {record_count:,} records to QGIS.
+
+<b>Performance Impact:</b>
+• QGIS may become unresponsive during import
+• Large datasets can cause memory issues
+• Consider importing a subset for testing first
+        """
+        
+        message_label = QLabel(message_text)
+        message_label.setWordWrap(True)
+        message_label.setStyleSheet("padding: 12px; background-color: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; color: #333;")
+        layout.addWidget(message_label)
+        
+        # Options
+        options_label = QLabel("<b>What would you like to do?</b>")
+        layout.addWidget(options_label)
+        
+        # Buttons
+        button_layout = QVBoxLayout()
+        
+        # Import all button
+        self.import_all_btn = QPushButton(f"Import All {record_count:,} Records")
+        self.import_all_btn.setStyleSheet("padding: 8px; font-weight: bold;")
+        if record_count > MAX_SAFE_IMPORT:
+            self.import_all_btn.setStyleSheet("padding: 8px; font-weight: bold; background-color: #ffebee; color: #c62828;")
+            self.import_all_btn.setText(f"⚠️ Import All {record_count:,} Records (Not Recommended)")
+        
+        # Import partial button
+        partial_count = min(PARTIAL_IMPORT_LIMIT, record_count)
+        self.import_partial_btn = QPushButton(f"Import First {partial_count:,} Records")
+        self.import_partial_btn.setStyleSheet("padding: 8px; background-color: #e8f5e8; color: #2e7d32;")
+        
+        # Cancel button
+        self.cancel_btn = QPushButton("Cancel Import")
+        self.cancel_btn.setStyleSheet("padding: 8px;")
+        
+        button_layout.addWidget(self.import_all_btn)
+        button_layout.addWidget(self.import_partial_btn)
+        button_layout.addWidget(self.cancel_btn)
+        
+        layout.addLayout(button_layout)
+        
+        # Connect signals
+        self.import_all_btn.clicked.connect(self._import_all)
+        self.import_partial_btn.clicked.connect(self._import_partial)
+        self.cancel_btn.clicked.connect(self._cancel)
+        
+        # Set default focus
+        if record_count > MAX_SAFE_IMPORT:
+            self.import_partial_btn.setDefault(True)
+        else:
+            self.import_all_btn.setDefault(True)
+    
+    def _import_all(self):
+        """User chose to import all records."""
+        self.user_choice = self.IMPORT_ALL
+        self.accept()
+    
+    def _import_partial(self):
+        """User chose to import partial records."""
+        self.user_choice = self.IMPORT_PARTIAL
+        self.accept()
+    
+    def _cancel(self):
+        """User chose to cancel import."""
+        self.user_choice = self.CANCEL
+        self.reject()
+    
+    def get_user_choice(self):
+        """Get the user's choice after dialog closes."""
+        return self.user_choice
+
+class ImportProgressDialog(QProgressDialog):
+    """Progress dialog for chunked imports with cancellation."""
+    
+    def __init__(self, total_records: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Importing Data to QGIS")
+        self.setModal(True)
+        self.setMinimumWidth(400)
+        
+        self.total_records = total_records
+        self.processed_records = 0
+        
+        # Set up progress dialog
+        self.setMinimum(0)
+        self.setMaximum(total_records)
+        self.setValue(0)
+        
+        # Labels
+        self.setLabelText(f"Preparing to import {total_records:,} records...")
+        self.setCancelButtonText("Cancel Import")
+        
+        # Don't auto-reset or auto-close
+        self.setAutoReset(False)
+        self.setAutoClose(False)
+        
+        # Show immediately
+        self.show()
+    
+    def update_progress(self, processed: int, chunk_info: str = ""):
+        """Update progress with current status."""
+        self.processed_records = processed
+        self.setValue(processed)
+        
+        # Calculate percentage
+        percentage = int((processed / self.total_records) * 100) if self.total_records > 0 else 0
+        
+        # Update label with detailed information
+        if chunk_info:
+            label_text = f"Importing records... ({percentage}%)\n{chunk_info}\nProcessed: {processed:,} of {self.total_records:,}"
+        else:
+            label_text = f"Importing records... ({percentage}%)\nProcessed: {processed:,} of {self.total_records:,}"
+        
+        self.setLabelText(label_text)
+        
+        # Process events to keep UI responsive
+        from qgis.PyQt.QtWidgets import QApplication
+        QApplication.processEvents()
+    
+    def finish_import(self, success: bool, final_count: int, message: str = ""):
+        """Finish the import process."""
+        if success:
+            self.setLabelText(f"✅ Import completed successfully!\nImported {final_count:,} records to QGIS.\n{message}")
+        else:
+            self.setLabelText(f"❌ Import failed or was cancelled.\nProcessed {self.processed_records:,} of {self.total_records:,} records.\n{message}")
+        
+        self.setCancelButtonText("Close")
+        self.setValue(self.maximum())  # Set to 100%

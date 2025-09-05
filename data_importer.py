@@ -12,10 +12,15 @@ from qgis.core import Qgis
 # Import modular components
 from .src.core.data_manager import DataManager
 from .src.ui.main_dialog import DataImporterDialog
-from .src.ui.components import LoginDialog, LayerOptionsDialog
+from .src.ui.components import (
+    LoginDialog, LayerOptionsDialog, LargeImportWarningDialog, ImportProgressDialog
+)
 from .src.utils.qgis_helpers import QGISLayerManager
 from .src.utils.logging import get_logger
-from .src.config.constants import PLUGIN_NAME, PLUGIN_VERSION
+from .src.config.constants import (
+    PLUGIN_NAME, PLUGIN_VERSION, LARGE_IMPORT_WARNING_THRESHOLD, 
+    PARTIAL_IMPORT_LIMIT, CHUNKED_IMPORT_THRESHOLD
+)
 
 logger = get_logger(__name__)
 
@@ -329,7 +334,7 @@ class DataImporter:
             self.dlg.show_error(error_msg)
 
     def _handle_data_import_request(self, tab_name, layer_name, color):
-        """Handle data import request."""
+        """Handle data import request with large dataset support."""
         try:
             # Get data from data manager
             data, headers = self.data_manager.get_tab_data(tab_name)
@@ -338,24 +343,96 @@ class DataImporter:
                 self.dlg.show_error("No data available to import.")
                 return
             
-            logger.info(f"Importing {len(data)} records to layer '{layer_name}'")
+            record_count = len(data)
+            logger.info(f"Import requested: {record_count} records to layer '{layer_name}'")
             
-            # Import to QGIS
-            success, message = self.layer_manager.create_point_layer(layer_name, data, color)
-            
-            if success:
-                self.dlg.show_info(message)
-                if self.iface:
-                    self.iface.messageBar().pushMessage(
-                        "Success", message, level=Qgis.Success, duration=5
-                    )
+            # Add OpenStreetMap base layer if it doesn't exist
+            osm_success, osm_message = self.layer_manager.add_osm_base_layer()
+            if osm_success:
+                logger.info(f"OSM layer: {osm_message}")
             else:
-                self.dlg.show_error(message)
+                logger.warning(f"OSM layer warning: {osm_message}")
+            
+            # Check if this is a large dataset that needs special handling
+            if record_count >= LARGE_IMPORT_WARNING_THRESHOLD:
+                # Show warning dialog
+                warning_dialog = LargeImportWarningDialog(record_count, self.dlg)
+                result = warning_dialog.exec_()
+                
+                if result != warning_dialog.Accepted:
+                    logger.info("User cancelled large import")
+                    return
+                
+                user_choice = warning_dialog.get_user_choice()
+                
+                if user_choice == LargeImportWarningDialog.CANCEL:
+                    return
+                elif user_choice == LargeImportWarningDialog.IMPORT_PARTIAL:
+                    # Import only first PARTIAL_IMPORT_LIMIT records
+                    data = data[:PARTIAL_IMPORT_LIMIT]
+                    record_count = len(data)
+                    logger.info(f"User chose partial import: {record_count} records")
+                # If IMPORT_ALL, continue with full dataset
+            
+            # Use chunked import for datasets > CHUNKED_IMPORT_THRESHOLD records
+            if record_count > CHUNKED_IMPORT_THRESHOLD:
+                self._perform_chunked_import(data, layer_name, color, record_count)
+            else:
+                # Use regular import for small datasets
+                success, message = self.layer_manager.create_point_layer(layer_name, data, color)
+                self._handle_import_result(success, message)
             
         except Exception as e:
             error_msg = f"Data import error: {str(e)}"
             logger.error(error_msg)
             self.dlg.show_error(error_msg)
+    
+    def _perform_chunked_import(self, data, layer_name, color, record_count):
+        """Perform chunked import with progress dialog."""
+        # Create progress dialog
+        progress_dialog = ImportProgressDialog(record_count, self.dlg)
+        progress_dialog.show()
+        
+        # Define progress callback
+        def progress_callback(processed_count, chunk_info):
+            if progress_dialog.wasCanceled():
+                logger.info("User cancelled import during processing")
+                raise InterruptedError("Import cancelled by user")
+            progress_dialog.update_progress(processed_count, chunk_info)
+        
+        try:
+            # Perform chunked import
+            success, message = self.layer_manager.create_point_layer_chunked(
+                layer_name, data, color, progress_callback
+            )
+            
+            # Update final progress
+            progress_dialog.finish_import(success, len(data) if success else 0, message)
+            
+            # Show result message
+            self._handle_import_result(success, message)
+            
+        except InterruptedError:
+            # User cancelled import
+            progress_dialog.finish_import(False, 0, "Import was cancelled by user.")
+            self.dlg.show_info("Import was cancelled.")
+            
+        except Exception as e:
+            # Import failed
+            error_msg = f"Chunked import failed: {str(e)}"
+            progress_dialog.finish_import(False, 0, error_msg)
+            self.dlg.show_error(error_msg)
+    
+    def _handle_import_result(self, success, message):
+        """Handle the result of an import operation."""
+        if success:
+            self.dlg.show_info(message)
+            if self.iface:
+                self.iface.messageBar().pushMessage(
+                    "Success", message, level=Qgis.Success, duration=5
+                )
+        else:
+            self.dlg.show_error(message)
     
     def _handle_cancel_request(self):
         """Handle cancel request."""

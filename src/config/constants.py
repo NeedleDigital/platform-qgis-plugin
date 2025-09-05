@@ -16,6 +16,17 @@ NEEDLE_BASE_API_URL = "https://master.api.drh.needle-digital.com"
 API_FETCH_LIMIT = 50000  # Maximum records per API request
 DEFAULT_RECORD_COUNT = 100
 
+# Import configuration
+IMPORT_CHUNK_SIZE = 10000  # Records per import chunk
+LARGE_IMPORT_WARNING_THRESHOLD = 50000  # Show warning above this count
+MAX_SAFE_IMPORT = 100000  # Recommend alternatives above this count
+PARTIAL_IMPORT_LIMIT = 50000  # Maximum records for partial import
+CHUNKED_IMPORT_THRESHOLD = 5000  # Use chunked import above this count
+
+# OpenStreetMap base layer configuration
+OSM_LAYER_NAME = "OpenStreetMap"
+OSM_LAYER_URL = "type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png&zmax=19&zmin=0&crs=EPSG3857"
+
 # Australian states and territories
 AUSTRALIAN_STATES: List[Tuple[str, str]] = [
     ("New South Wales", "NSW"),

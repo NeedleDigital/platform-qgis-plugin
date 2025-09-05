@@ -12,7 +12,8 @@ from qgis.PyQt.QtGui import QFont
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer
 
 from .components import (
-    DynamicSearchFilterWidget, StaticFilterWidget, LoginDialog, LayerOptionsDialog
+    DynamicSearchFilterWidget, StaticFilterWidget, LoginDialog, LayerOptionsDialog,
+    LargeImportWarningDialog, ImportProgressDialog
 )
 from ..config.constants import AUSTRALIAN_STATES, CHEMICAL_ELEMENTS, COMPARISON_OPERATORS, UI_CONFIG
 from ..utils.logging import get_logger
