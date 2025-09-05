@@ -1,15 +1,15 @@
-# Needle Digital Mining Data Importer Plugin Metadata
+# ND Data Importer Plugin Metadata
 # This file contains metadata for the QGIS plugin
 
 [general]
-name=Needle Digital Mining Data Importer
+name=ND Data Importer
 qgisMinimumVersion=3.0
 description=Comprehensive QGIS plugin for importing Australian mining drill hole and assay data with advanced filtering and large dataset optimization
 version=1.0.0
 author=Needle Digital
 email=ahmad@needle-digital.com
 
-about=The Needle Digital Mining Data Importer provides seamless access to Australia's comprehensive mining database. Import drill hole collar, survey, and assay data directly into QGIS with state-wise filtering, company search, chemical element analysis, and optimized handling of large datasets (1M+ records). Features include automatic OpenStreetMap base layer integration, chunked processing for performance, real-time progress tracking, and user-friendly tabbed interface. Perfect for geologists, mining engineers, and researchers requiring spatial analysis of Australian mining data.
+about=The ND Data Importer provides seamless access to Australia's comprehensive mining database. Import drill hole collar, survey, and assay data directly into QGIS with state-wise filtering, company search, chemical element analysis, and optimized handling of large datasets (1M+ records). Features include automatic OpenStreetMap base layer integration, chunked processing for performance, real-time progress tracking, and user-friendly tabbed interface. Perfect for geologists, mining engineers, and researchers requiring spatial analysis of Australian mining data.
 
 # Project links
 tracker=https://github.com/NeedleDigital/platform-qgis-plugin/issues
