@@ -31,14 +31,24 @@ class ApiClient(QObject):
         self.auth_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
         self.token_expires_at: float = 0
+        self._initialization_complete = False
         
         # Token refresh timer
         self.token_refresh_timer = QTimer()
         self.token_refresh_timer.timeout.connect(lambda: self.refresh_auth_token(silent=True))
         
-        # Load saved refresh token
+        # Load saved refresh token but don't refresh immediately
         settings = QgsSettings()
         self.refresh_token = settings.value("needle/refreshToken", None)
+    
+    def complete_initialization(self):
+        """Complete initialization and attempt silent token refresh if needed."""
+        if self._initialization_complete:
+            return
+            
+        self._initialization_complete = True
+        
+        # Now it's safe to attempt token refresh
         if self.refresh_token:
             self.refresh_auth_token(silent=True)
     
