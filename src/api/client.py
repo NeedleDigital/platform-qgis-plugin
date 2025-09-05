@@ -35,7 +35,7 @@ API Endpoints:
     - Count queries: Data availability checks
 
 Author: Needle Digital
-Contact: ahmad@needle-digital.com
+Contact: divyansh@needle-digital.com
 """
 
 import json

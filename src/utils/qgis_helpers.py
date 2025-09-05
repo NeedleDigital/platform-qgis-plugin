@@ -27,7 +27,7 @@ Coordinate System:
     system, appropriate for Australian mining data visualization.
 
 Author: Needle Digital
-Contact: ahmad@needle-digital.com
+Contact: divyansh@needle-digital.com
 """
 
 from typing import List, Dict, Any, Optional, Tuple
