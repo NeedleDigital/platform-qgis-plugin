@@ -294,7 +294,7 @@ class DataImporterDialog(QDialog):
         action_layout = QHBoxLayout()
         action_layout.addStretch()
         
-        import_button = QPushButton("Import All Data to QGIS")
+        import_button = QPushButton("Import to QGIS")
         import_button.setDefault(False)
         import_button.setAutoDefault(False)
         import_button.setVisible(False)  # Hidden until data is available
@@ -500,27 +500,57 @@ class DataImporterDialog(QDialog):
             end_idx = min(start_idx + records_per_page, len(data))
             page_data = data[start_idx:end_idx]
             
-            # Setup table with current page data
-            table.setRowCount(len(page_data))
-            table.setColumnCount(len(headers))
-            table.setHorizontalHeaderLabels(headers)
+            # Batch UI updates for better performance
+            table.setUpdatesEnabled(False)
             
-            # Populate table with current page data and set global row indices
-            for row_idx, record in enumerate(page_data):
-                # Calculate global row number (1-based)
-                global_row_number = start_idx + row_idx + 1
+            try:
+                # Check if table structure needs to be rebuilt
+                need_structure_rebuild = (table.rowCount() != len(page_data) or 
+                                        table.columnCount() != len(headers) or
+                                        [table.horizontalHeaderItem(i).text() if table.horizontalHeaderItem(i) else "" 
+                                         for i in range(table.columnCount())] != headers)
                 
-                # Set the row header to show global index
-                table.setVerticalHeaderItem(row_idx, QTableWidgetItem(str(global_row_number)))
+                if need_structure_rebuild:
+                    # Setup table structure only when necessary
+                    table.setRowCount(len(page_data))
+                    table.setColumnCount(len(headers))
+                    table.setHorizontalHeaderLabels(headers)
                 
-                for col_idx, header in enumerate(headers):
-                    value = record.get(header, '')
-                    item = QTableWidgetItem(str(value) if value is not None else '')
-                    table.setItem(row_idx, col_idx, item)
-            
-            table.resizeColumnsToContents()
-            content_stack.setCurrentWidget(table)
-            import_button.setVisible(True)
+                # Pre-compute row numbers to avoid repeated string conversions
+                row_numbers = [str(start_idx + i + 1) for i in range(len(page_data))]
+                
+                # Populate table with current page data and set global row indices
+                for row_idx, record in enumerate(page_data):
+                    # Reuse existing vertical header item or create new one
+                    v_header_item = table.verticalHeaderItem(row_idx)
+                    if v_header_item is None:
+                        v_header_item = QTableWidgetItem()
+                        table.setVerticalHeaderItem(row_idx, v_header_item)
+                    v_header_item.setText(row_numbers[row_idx])
+                    
+                    for col_idx, header in enumerate(headers):
+                        value = record.get(header, '')
+                        # Convert value to string once and cache
+                        value_str = str(value) if value is not None else ''
+                        
+                        # Reuse existing table item or create new one
+                        item = table.item(row_idx, col_idx)
+                        if item is None:
+                            item = QTableWidgetItem()
+                            table.setItem(row_idx, col_idx, item)
+                        item.setText(value_str)
+                
+                # Only resize columns on first page or structure rebuild
+                if need_structure_rebuild:
+                    table.resizeColumnsToContents()
+                
+                content_stack.setCurrentWidget(table)
+                import_button.setVisible(True)
+                import_button.setEnabled(True)
+                
+            finally:
+                # Always re-enable updates
+                table.setUpdatesEnabled(True)
             
             # Update pagination
             prev_button = tab_widgets['prev_button']
@@ -573,10 +603,14 @@ class DataImporterDialog(QDialog):
         pagination_widget = tab_widgets['pagination_widget']
         fetch_button = tab_widgets['fetch_button']
         
-        # Clear any previous data from memory and UI
+        # Clear any previous data from memory and UI efficiently
         table = tab_widgets['table']
-        table.setRowCount(0)
-        table.setColumnCount(0)
+        table.setUpdatesEnabled(False)
+        try:
+            table.setRowCount(0)
+            table.setColumnCount(0)
+        finally:
+            table.setUpdatesEnabled(True)
         
         # Show loading state
         loading_label.setText("Loading data...")
