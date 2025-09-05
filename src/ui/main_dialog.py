@@ -28,6 +28,8 @@ class DataImporterDialog(QDialog):
     data_fetch_requested = pyqtSignal(str, dict, bool)  # tab_name, params, fetch_all
     data_clear_requested = pyqtSignal(str)  # tab_name
     data_import_requested = pyqtSignal(str, str, object)  # tab_name, layer_name, color
+    page_next_requested = pyqtSignal(str)  # tab_name
+    page_previous_requested = pyqtSignal(str)  # tab_name
     
     def __init__(self, parent=None):
         super(DataImporterDialog, self).__init__(parent)
@@ -237,8 +239,11 @@ class DataImporterDialog(QDialog):
             'content_stack': content_stack
         })
         
-        # Pagination (placeholder for future implementation)
-        pagination_layout = QHBoxLayout()
+        # Pagination
+        pagination_widget = QWidget()
+        pagination_layout = QHBoxLayout(pagination_widget)
+        pagination_layout.setContentsMargins(0, 0, 0, 0)
+        
         prev_button = QPushButton("<< Previous")
         prev_button.setEnabled(False)
         page_label = QLabel("Page 0 of 0")
@@ -250,12 +255,15 @@ class DataImporterDialog(QDialog):
         pagination_layout.addWidget(page_label)
         pagination_layout.addWidget(next_button)
         pagination_layout.addStretch()
-        layout.addLayout(pagination_layout)
+        
+        pagination_widget.setVisible(False)  # Hidden by default
+        layout.addWidget(pagination_widget)
         
         widgets.update({
             'prev_button': prev_button,
             'page_label': page_label,
-            'next_button': next_button
+            'next_button': next_button,
+            'pagination_widget': pagination_widget
         })
         
         # Action buttons
@@ -312,6 +320,12 @@ class DataImporterDialog(QDialog):
         # Import buttons
         self.holes_tab['import_button'].clicked.connect(lambda: self._handle_import_request("Holes"))
         self.assays_tab['import_button'].clicked.connect(lambda: self._handle_import_request("Assays"))
+        
+        # Pagination buttons
+        self.holes_tab['prev_button'].clicked.connect(lambda: self.page_previous_requested.emit("Holes"))
+        self.holes_tab['next_button'].clicked.connect(lambda: self.page_next_requested.emit("Holes"))
+        self.assays_tab['prev_button'].clicked.connect(lambda: self.page_previous_requested.emit("Assays"))
+        self.assays_tab['next_button'].clicked.connect(lambda: self.page_next_requested.emit("Assays"))
     
     def _handle_login_button(self):
         """Handle login/logout button click."""
@@ -357,6 +371,15 @@ class DataImporterDialog(QDialog):
         # Check if fetch_all is requested
         fetch_all = tab_widgets['fetch_all_checkbox'].isChecked()
         
+        # Get requested record count
+        if not fetch_all:
+            try:
+                requested_count = int(tab_widgets['count_input'].text() or "100")
+                params['requested_count'] = requested_count
+            except ValueError:
+                requested_count = 100
+                params['requested_count'] = requested_count
+        
         # Emit request signal
         self.data_fetch_requested.emit(tab_name, params, fetch_all)
     
@@ -400,10 +423,11 @@ class DataImporterDialog(QDialog):
         else:
             self.progress_bar.setVisible(False)
     
-    def show_data(self, tab_name: str, data: list, headers: list):
-        """Show data in the specified tab."""
+    def show_data(self, tab_name: str, data: list, headers: list, pagination_info: dict):
+        """Show data in the specified tab with pagination info."""
         # Debug logging
         print(f"[DEBUG] show_data called: tab_name={tab_name}, data_length={len(data)}, headers={headers}")
+        print(f"[DEBUG] pagination_info: {pagination_info}")
         if data:
             print(f"[DEBUG] First record: {data[0] if data else 'None'}")
         
@@ -413,15 +437,24 @@ class DataImporterDialog(QDialog):
         loading_label = tab_widgets['loading_label']
         content_stack = tab_widgets['content_stack']
         import_button = tab_widgets['import_button']
+        pagination_widget = tab_widgets['pagination_widget']
+        page_label = tab_widgets['page_label']
         
         if data:
-            # Setup table
-            table.setRowCount(len(data))
+            # Calculate which data to show for current page (100 records max per page)
+            records_per_page = 100
+            current_page = pagination_info.get('current_page', 1)
+            start_idx = (current_page - 1) * records_per_page
+            end_idx = min(start_idx + records_per_page, len(data))
+            page_data = data[start_idx:end_idx]
+            
+            # Setup table with current page data
+            table.setRowCount(len(page_data))
             table.setColumnCount(len(headers))
             table.setHorizontalHeaderLabels(headers)
             
-            # Populate table
-            for row_idx, record in enumerate(data):
+            # Populate table with current page data
+            for row_idx, record in enumerate(page_data):
                 for col_idx, header in enumerate(headers):
                     value = record.get(header, '')
                     item = QTableWidgetItem(str(value) if value is not None else '')
@@ -430,10 +463,29 @@ class DataImporterDialog(QDialog):
             table.resizeColumnsToContents()
             content_stack.setCurrentWidget(table)
             import_button.setVisible(True)
+            
+            # Update pagination
+            prev_button = tab_widgets['prev_button']
+            next_button = tab_widgets['next_button']
+            
+            if pagination_info['has_data'] and pagination_info['total_pages'] > 1:
+                pagination_widget.setVisible(True)
+                page_text = f"Page {pagination_info['current_page']} of {pagination_info['total_pages']}"
+                page_text += f" (showing {len(page_data)} of {pagination_info['total_records']} records)"
+                page_label.setText(page_text)
+                
+                # Enable/disable navigation buttons
+                prev_button.setEnabled(pagination_info['current_page'] > 1)
+                next_button.setEnabled(pagination_info['current_page'] < pagination_info['total_pages'])
+            else:
+                pagination_widget.setVisible(False)
+                prev_button.setEnabled(False)
+                next_button.setEnabled(False)
         else:
             loading_label.setText("No data to display.")
             content_stack.setCurrentWidget(loading_label)
             import_button.setVisible(False)
+            pagination_widget.setVisible(False)
     
     def show_error(self, message: str):
         """Show error message."""

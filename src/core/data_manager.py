@@ -22,7 +22,7 @@ class DataManager(QObject):
     # Signals
     status_changed = pyqtSignal(str)  # Status message
     progress_changed = pyqtSignal(int)  # Progress percentage
-    data_ready = pyqtSignal(str, list, list)  # tab_name, data, headers
+    data_ready = pyqtSignal(str, list, list, dict)  # tab_name, data, headers, pagination_info
     error_occurred = pyqtSignal(str)  # Error message
     
     def __init__(self):
@@ -75,9 +75,17 @@ class DataManager(QObject):
             self.error_occurred.emit(VALIDATION_MESSAGES['auth_required'])
             return
         
-        # Validate fetch_all request
+        # Store filter parameters
+        self.tab_states[tab_name]['filter_params'] = filter_params.copy()
+        
+        # Clear existing data
+        self._clear_tab_data(tab_name)
+        
+        # Start timing
+        self.fetch_start_time = time.time()
+        
         if fetch_all:
-            # Convert states parameter to list for validation
+            # Validate fetch_all request
             states_param = filter_params.get('states', "")
             if states_param:
                 selected_states = [state.strip() for state in states_param.split(",")]
@@ -88,28 +96,31 @@ class DataManager(QObject):
             if not is_valid:
                 self.error_occurred.emit(error_msg)
                 return
-        
-        # Store filter parameters
-        self.tab_states[tab_name]['filter_params'] = filter_params.copy()
-        
-        # Clear existing data
-        self._clear_tab_data(tab_name)
-        
-        # Start timing
-        self.fetch_start_time = time.time()
-        
-        # Get total record count first
-        count_endpoint = API_ENDPOINTS['holes_count'] if tab_name == 'Holes' else API_ENDPOINTS['assays_count']
-        
-        log_api_request(count_endpoint, filter_params, logger)
-        self.status_changed.emit("Calculating total available records...")
-        self.progress_changed.emit(5)
-        
-        self.api_client.make_api_request(
-            count_endpoint,
-            filter_params,
-            lambda data: self._handle_count_response(tab_name, data, fetch_all)
-        )
+            
+            # For fetch_all: First get count, then fetch data
+            count_endpoint = API_ENDPOINTS['holes_count'] if tab_name == 'Holes' else API_ENDPOINTS['assays_count']
+            
+            log_api_request(count_endpoint, filter_params, logger)
+            self.status_changed.emit("Calculating total available records...")
+            self.progress_changed.emit(5)
+            
+            self.api_client.make_api_request(
+                count_endpoint,
+                filter_params,
+                lambda data: self._handle_count_response(tab_name, data, fetch_all)
+            )
+        else:
+            # For specific count: Skip count API, directly calculate and fetch
+            requested_records = filter_params.get('requested_count', 100)
+            
+            # Set total_records to requested_records for pagination calculation
+            self.tab_states[tab_name]['total_records'] = requested_records
+            
+            self.status_changed.emit(f"Preparing to fetch {requested_records} records...")
+            self.progress_changed.emit(5)
+            
+            # Start direct fetch without count API
+            self._start_sequential_fetch(tab_name, requested_records)
     
     def _handle_count_response(self, tab_name: str, response_data: Dict[str, Any], 
                               fetch_all: bool) -> None:
@@ -129,7 +140,8 @@ class DataManager(QObject):
             if total_count == 0:
                 self.progress_changed.emit(0)  # Reset progress bar
                 self.status_changed.emit("No records found matching your criteria.")
-                self.data_ready.emit(tab_name, [], [])
+                pagination_info = self._get_pagination_info(tab_name)
+                self.data_ready.emit(tab_name, [], [], pagination_info)
                 return
             
             # Determine how many records to fetch
@@ -272,11 +284,13 @@ class DataManager(QObject):
             self.progress_changed.emit(100)
             self.status_changed.emit(f"Data fetch complete. {record_count} records in {fetch_time:.1f}s")
             
-            # Emit data ready signal
+            # Emit data ready signal with pagination info
+            pagination_info = self._get_pagination_info(tab_name)
             self.data_ready.emit(
                 tab_name,
                 self.tab_states[tab_name]['data'],
-                self.tab_states[tab_name]['headers']
+                self.tab_states[tab_name]['headers'],
+                pagination_info
             )
             
             logger.info(f"Data fetch completed: {record_count} records for {tab_name} in {fetch_time:.1f}s")
@@ -299,7 +313,8 @@ class DataManager(QObject):
         # Reset UI state
         self.progress_changed.emit(0)
         self.status_changed.emit("Ready to fetch data.")
-        self.data_ready.emit(tab_name, [], [])
+        pagination_info = self._get_pagination_info(tab_name)
+        self.data_ready.emit(tab_name, [], [], pagination_info)
     
     def _clear_tab_data(self, tab_name: str) -> None:
         """Internal method to clear tab data."""
@@ -326,3 +341,63 @@ class DataManager(QObject):
         
         self.progress_changed.emit(0)
         self.status_changed.emit("Ready for next request.")
+    
+    def _get_pagination_info(self, tab_name: str) -> dict:
+        """Calculate pagination information for a tab (table-based pagination, 100 records per page)."""
+        state = self.tab_states[tab_name]
+        data_count = len(state['data'])
+        
+        if data_count == 0:
+            return {
+                'current_page': 0,
+                'total_pages': 0,
+                'records_per_table_page': 100,  # Table displays 100 records per page
+                'total_records': data_count,
+                'showing_records': 0,
+                'has_data': False
+            }
+        
+        # Table-based pagination: 100 records per page in the table display
+        records_per_table_page = 100
+        total_pages = max(1, (data_count + records_per_table_page - 1) // records_per_table_page)
+        current_page = state['current_page'] + 1  # Convert from 0-based to 1-based
+        
+        return {
+            'current_page': current_page,
+            'total_pages': total_pages,
+            'records_per_table_page': records_per_table_page,
+            'total_records': data_count,
+            'showing_records': min(records_per_table_page, data_count - (current_page - 1) * records_per_table_page),
+            'has_data': True
+        }
+    
+    def navigate_to_page(self, tab_name: str, page_number: int) -> None:
+        """Navigate to a specific page in the table display."""
+        state = self.tab_states[tab_name]
+        data_count = len(state['data'])
+        
+        if data_count == 0:
+            return
+        
+        records_per_table_page = 100
+        max_page = max(1, (data_count + records_per_table_page - 1) // records_per_table_page)
+        
+        # Validate page number
+        page_number = max(1, min(page_number, max_page))
+        state['current_page'] = page_number - 1  # Convert to 0-based
+        
+        # Emit updated data for current page
+        pagination_info = self._get_pagination_info(tab_name)
+        self.data_ready.emit(tab_name, state['data'], state['headers'], pagination_info)
+    
+    def next_page(self, tab_name: str) -> None:
+        """Navigate to next page."""
+        state = self.tab_states[tab_name]
+        current_page = state['current_page'] + 1  # Convert to 1-based
+        self.navigate_to_page(tab_name, current_page + 1)
+    
+    def previous_page(self, tab_name: str) -> None:
+        """Navigate to previous page."""
+        state = self.tab_states[tab_name]
+        current_page = state['current_page'] + 1  # Convert to 1-based
+        self.navigate_to_page(tab_name, current_page - 1)

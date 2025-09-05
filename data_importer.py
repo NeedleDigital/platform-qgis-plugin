@@ -171,6 +171,10 @@ class DataImporter:
         self.dlg.data_clear_requested.connect(self._handle_data_clear_request)
         self.dlg.data_import_requested.connect(self._handle_data_import_request)
         
+        # Pagination operations
+        self.dlg.page_next_requested.connect(self._handle_page_next)
+        self.dlg.page_previous_requested.connect(self._handle_page_previous)
+        
         # Data manager signals
         self.data_manager.status_changed.connect(self.dlg.update_status)
         self.data_manager.progress_changed.connect(self.dlg.update_progress)
@@ -210,8 +214,8 @@ class DataImporter:
             self.dlg.update_login_status(False)
             
             # Clear any existing data
-            self.dlg.show_data("Holes", [], [])
-            self.dlg.show_data("Assays", [], [])
+            self.dlg.show_data("Holes", [], [], {'has_data': False, 'current_page': 0, 'total_pages': 0, 'showing_records': 0, 'total_records': 0, 'records_per_page': 100})
+            self.dlg.show_data("Assays", [], [], {'has_data': False, 'current_page': 0, 'total_pages': 0, 'showing_records': 0, 'total_records': 0, 'records_per_page': 100})
             
             if self.iface:
                 self.iface.messageBar().pushMessage(
@@ -338,5 +342,23 @@ class DataImporter:
             
         except Exception as e:
             error_msg = f"Data import error: {str(e)}"
+            logger.error(error_msg)
+            self.dlg.show_error(error_msg)
+
+    def _handle_page_next(self, tab_name: str):
+        """Handle next page request."""
+        try:
+            self.data_manager.next_page(tab_name)
+        except Exception as e:
+            error_msg = f"Page navigation error: {str(e)}"
+            logger.error(error_msg)
+            self.dlg.show_error(error_msg)
+
+    def _handle_page_previous(self, tab_name: str):
+        """Handle previous page request."""
+        try:
+            self.data_manager.previous_page(tab_name)
+        except Exception as e:
+            error_msg = f"Page navigation error: {str(e)}"
             logger.error(error_msg)
             self.dlg.show_error(error_msg)
