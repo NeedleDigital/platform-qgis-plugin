@@ -53,6 +53,15 @@ class DataImporterDialog(QDialog):
         config = UI_CONFIG['main_window']
         self.setWindowTitle(config['title'])
         self.setMinimumSize(config['min_width'], config['min_height'])
+        
+        # Set window flags to include minimize button and proper window management
+        self.setWindowFlags(
+            Qt.Window | 
+            Qt.WindowMinimizeButtonHint | 
+            Qt.WindowMaximizeButtonHint | 
+            Qt.WindowCloseButtonHint |
+            Qt.WindowSystemMenuHint
+        )
 
         self.main_layout = QVBoxLayout(self)
         
@@ -591,6 +600,18 @@ class DataImporterDialog(QDialog):
     def hide_cancel_button(self):
         """Hide the cancel request button when not making API calls."""
         self.cancel_button.setVisible(False)
+    
+    def show_and_raise(self):
+        """Show the dialog and bring it to front."""
+        # Show the dialog
+        self.show()
+        
+        # Bring to front and activate
+        self.raise_()
+        self.activateWindow()
+        
+        # For additional assurance on some systems
+        self.setWindowState(self.windowState() & ~Qt.WindowMinimized | Qt.WindowActive)
     
     def show_loading(self, tab_name: str):
         """Show loading state for the specified tab."""

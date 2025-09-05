@@ -133,8 +133,8 @@ class DataImporter:
             # Complete API client initialization (safe to make network calls now)
             self.data_manager.api_client.complete_initialization()
             
-            # Show the dialog
-            self.dlg.show()
+            # Show the dialog and bring it to front
+            self.dlg.show_and_raise()
             
             # Update UI based on authentication status
             is_authenticated = self.data_manager.is_authenticated()
