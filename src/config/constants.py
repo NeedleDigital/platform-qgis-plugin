@@ -1,10 +1,33 @@
 """
-Constants and configuration values for the Needle Digital Mining Data Importer plugin.
+Configuration Constants for Needle Digital Mining Data Importer
+
+This module contains all configuration constants, thresholds, and static data
+used throughout the plugin. Centralizing these values makes the codebase
+more maintainable and allows for easy customization.
+
+Configuration Categories:
+    - Plugin metadata and version information
+    - API configuration and endpoints
+    - Performance thresholds and limits
+    - UI configuration and styling
+    - Australian states and territories data
+    - Chemical elements for mining analysis
+    - Validation messages and error handling
+
+Contributors Guide:
+    When modifying these constants, consider the impact on:
+    - Plugin performance and memory usage
+    - User experience and interface behavior
+    - API rate limits and server capacity
+    - Large dataset handling capabilities
+
+Author: Needle Digital
+Contact: ahmad@needle-digital.com
 """
 
 from typing import List, Tuple
 
-# Plugin metadata
+# Plugin metadata and version information
 PLUGIN_NAME = "Needle Digital DH Importer"
 PLUGIN_VERSION = "1.0.0"
 PLUGIN_AUTHOR = "Needle Digital"

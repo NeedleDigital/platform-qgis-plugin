@@ -1,5 +1,34 @@
 """
-Main dialog UI for the Needle Digital Mining Data Importer plugin.
+Main Dialog UI for the Needle Digital Mining Data Importer Plugin
+
+This module contains the primary user interface for the mining data importer,
+providing a comprehensive tabbed interface for data exploration and import.
+
+Key UI Features:
+    - Tabbed interface for Holes and Assays data
+    - Dynamic filtering with real-time search
+    - Company search with auto-complete
+    - Large dataset visualization with pagination
+    - Progress tracking and user feedback
+    - Import options with layer customization
+    - Professional styling and responsive design
+
+Architecture:
+    - Signal-based communication with backend
+    - Component-based UI design for reusability
+    - Responsive layout with proper sizing
+    - Error handling with user-friendly messages
+    - Performance optimized for large datasets
+
+User Workflow:
+    1. Authentication via login dialog
+    2. Data filtering and search
+    3. Data preview with pagination
+    4. Import configuration (layer name, styling)
+    5. QGIS layer creation with progress tracking
+
+Author: Needle Digital
+Contact: ahmad@needle-digital.com
 """
 
 from qgis.PyQt.QtWidgets import (

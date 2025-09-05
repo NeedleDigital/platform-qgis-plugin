@@ -1,5 +1,33 @@
 """
-QGIS integration utilities for the Needle Digital Mining Data Importer plugin.
+QGIS Integration Utilities
+
+This module provides specialized utilities for integrating mining data with QGIS,
+handling all aspects of spatial data visualization and layer management.
+
+Key Functionality:
+    - Point layer creation from mining data (drill holes, assays)
+    - Automatic coordinate system handling (Australian GDA2020)
+    - Large dataset optimization with chunked processing
+    - Memory management for performance
+    - OpenStreetMap base layer integration
+    - Dynamic styling and visualization
+    - Progress tracking for long operations
+    - User cancellation support
+
+Technical Features:
+    - Supports 1M+ record imports without crashes
+    - Intelligent field type detection from data
+    - Flexible coordinate field mapping (lat/lon, x/y)
+    - Automatic geometry validation
+    - Layer positioning and styling management
+    - Error handling and user feedback
+
+Coordinate System:
+    Uses Australian GDA2020 (EPSG:7844) as the default coordinate reference
+    system, appropriate for Australian mining data visualization.
+
+Author: Needle Digital
+Contact: ahmad@needle-digital.com
 """
 
 from typing import List, Dict, Any, Optional, Tuple
@@ -11,20 +39,51 @@ from qgis.core import (
 from qgis.PyQt.QtCore import QVariant
 from qgis.PyQt.QtGui import QColor
 
-from ..config.constants import DEFAULT_LAYER_STYLE, IMPORT_CHUNK_SIZE, OSM_LAYER_NAME, OSM_LAYER_URL, AUTO_ZOOM_THRESHOLD
+# Configuration imports for styling and thresholds
+from ..config.constants import (
+    DEFAULT_LAYER_STYLE, IMPORT_CHUNK_SIZE, OSM_LAYER_NAME, 
+    OSM_LAYER_URL, AUTO_ZOOM_THRESHOLD
+)
 from .logging import get_logger
 
 logger = get_logger(__name__)
 
 class QGISLayerManager:
-    """Helper class for managing QGIS layers."""
+    """QGIS Layer Management and Integration Helper.
+    
+    This class provides comprehensive QGIS integration for mining data visualization,
+    handling layer creation, styling, and management with optimization for large datasets.
+    
+    Key Features:
+        - Memory-efficient point layer creation
+        - Automatic field type detection and mapping
+        - Large dataset chunked processing (prevents crashes)
+        - OpenStreetMap base layer management
+        - Dynamic styling and visualization
+        - Progress tracking with user cancellation
+        - Error handling and recovery
+    
+    Performance Optimizations:
+        - Chunked processing for datasets >10,000 records
+        - Garbage collection between chunks
+        - Memory usage monitoring
+        - Smart zoom behavior based on dataset size
+        - Efficient geometry creation and validation
+    
+    Attributes:
+        iface (QgisInterface): Reference to QGIS interface for UI integration
+                              None if running in headless mode or testing
+    """
     
     def __init__(self, iface=None):
         """
-        Initialize the layer manager.
+        Initialize the QGIS layer manager.
         
         Args:
-            iface: QGIS interface instance
+            iface (QgisInterface, optional): QGIS interface instance for GUI access.
+                                           None for headless operations or testing.
+                                           Provides access to map canvas, toolbars,
+                                           and message bar for user feedback.
         """
         self.iface = iface
     

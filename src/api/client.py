@@ -1,6 +1,41 @@
 """
-API client for Needle Digital mining data service.
-Handles authentication, token management, and API requests.
+API Client for Needle Digital Mining Data Service
+
+This module provides a comprehensive HTTP client for communicating with the
+Needle Digital mining data API, handling all aspects of authentication,
+token management, and data requests.
+
+Key Features:
+    - Firebase Authentication integration
+    - Automatic token refresh and management
+    - Secure credential storage using QGIS settings
+    - Robust error handling and retry logic
+    - Signal-based asynchronous operations
+    - Request/response logging for debugging
+    - Network timeout and error recovery
+
+Authentication Flow:
+    1. User provides email/password credentials
+    2. Firebase authentication via REST API
+    3. JWT tokens stored securely in QGIS settings
+    4. Automatic token refresh before expiration
+    5. Silent re-authentication on startup
+
+Security Features:
+    - Secure token storage using QGIS encrypted settings
+    - No plaintext password storage
+    - Token validation and automatic refresh
+    - Request signing and authorization headers
+    - SSL/TLS encryption for all communications
+
+API Endpoints:
+    - Authentication: Firebase Auth API
+    - Data fetching: Needle Digital mining database
+    - Company search: Company directory API
+    - Count queries: Data availability checks
+
+Author: Needle Digital
+Contact: ahmad@needle-digital.com
 """
 
 import json
@@ -11,19 +46,43 @@ from qgis.PyQt.QtCore import QObject, pyqtSignal, QTimer, QUrl, QByteArray
 from qgis.PyQt.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 from qgis.core import QgsSettings
 
-from ..config.settings import config
-from ..utils.logging import get_logger
+# Internal configuration and utilities
+from ..config.settings import config  # API configuration and settings
+from ..utils.logging import get_logger  # Centralized logging system
 
 logger = get_logger(__name__)
 
 class ApiClient(QObject):
-    """API client for Needle Digital services."""
+    """HTTP API Client for Needle Digital Mining Data Services.
     
-    # Signals
-    login_success = pyqtSignal()
-    login_failed = pyqtSignal(str)
-    api_response_received = pyqtSignal(str, dict)  # endpoint, data
-    api_error_occurred = pyqtSignal(str, str)      # endpoint, error_message
+    A comprehensive API client that handles all communication with the Needle Digital
+    mining database, including authentication, token management, and data requests.
+    
+    Features:
+        - Firebase Authentication with JWT tokens
+        - Automatic token refresh and session management
+        - Secure credential storage using QGIS settings
+        - Asynchronous operations with Qt signals
+        - Robust error handling and retry logic
+        - Request/response logging for debugging
+        - Network timeout and connection management
+    
+    Signals:
+        login_success(): Emitted when authentication succeeds
+        login_failed(str): Emitted when authentication fails with error message
+        api_response_received(str, dict): Emitted with endpoint and response data
+        api_error_occurred(str, str): Emitted with endpoint and error message
+    
+    Thread Safety:
+        This class is designed to be used from the main Qt thread and uses
+        Qt's signal/slot mechanism for asynchronous operations.
+    """
+    
+    # Qt Signals for asynchronous operation feedback
+    login_success = pyqtSignal()  # Authentication successful
+    login_failed = pyqtSignal(str)  # Authentication failed with error message
+    api_response_received = pyqtSignal(str, dict)  # endpoint, response_data
+    api_error_occurred = pyqtSignal(str, str)  # endpoint, error_message
     
     def __init__(self):
         super().__init__()
