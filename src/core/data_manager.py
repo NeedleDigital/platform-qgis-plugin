@@ -24,7 +24,7 @@ Key Features:
     - User cancellation support
 
 Author: Needle Digital
-Contact: ahmad@needle-digital.com
+Contact: divyansh@needle-digital.com
 """
 
 import time

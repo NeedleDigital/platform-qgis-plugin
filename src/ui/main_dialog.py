@@ -28,7 +28,7 @@ User Workflow:
     5. QGIS layer creation with progress tracking
 
 Author: Needle Digital
-Contact: ahmad@needle-digital.com
+Contact: divyansh@needle-digital.com
 """
 
 from qgis.PyQt.QtWidgets import (

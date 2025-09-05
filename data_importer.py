@@ -16,7 +16,7 @@ Main Features:
     - Memory management for performance
 
 Author: Needle Digital
-Contact: ahmad@needle-digital.com
+Contact: divyansh@needle-digital.com
 License: GPL-3.0+
 """
 

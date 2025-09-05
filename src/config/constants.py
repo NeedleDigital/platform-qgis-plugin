@@ -22,7 +22,7 @@ Contributors Guide:
     - Large dataset handling capabilities
 
 Author: Needle Digital
-Contact: ahmad@needle-digital.com
+Contact: divyansh@needle-digital.com
 """
 
 from typing import List, Tuple

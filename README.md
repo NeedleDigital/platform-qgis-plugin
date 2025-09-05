@@ -100,7 +100,7 @@ cp -r platform-qgis-plugin needle-digital-importer
 
 **Important**: To access the mining data, you need valid login credentials.
 
-📧 **Contact**: ahmad@needle-digital.com
+📧 **Contact**: divyansh@needle-digital.com
 
 - Request access to the Needle Digital mining database
 - Provide your organization details and intended use case
@@ -330,7 +330,7 @@ The project follows PEP 8 standards with:
 #### Authentication Problems
 
 - **Symptom**: Login fails with valid credentials
-- **Solution**: Check internet connection and contact ahmad@needle-digital.com
+- **Solution**: Check internet connection and contact divyansh@needle-digital.com
 
 #### Large Dataset Timeouts
 
@@ -360,7 +360,7 @@ LOG_LEVEL = logging.DEBUG
 
 1. **Check the logs**: View QGIS message log for error details
 2. **Report issues**: Create detailed bug reports on GitHub
-3. **Contact support**: Email ahmad@needle-digital.com for technical issues
+3. **Contact support**: Email divyansh@needle-digital.com for technical issues
 
 ## 📄 License
 
@@ -399,12 +399,12 @@ We welcome contributions from the community!
 
 ### Technical Support
 
-- **Email**: ahmad@needle-digital.com
+- **Email**: divyansh@needle-digital.com
 - **GitHub Issues**: [Report bugs and feature requests](https://github.com/NeedleDigital/platform-qgis-plugin/issues)
 
 ### Account & Access
 
-- **Data Access**: ahmad@needle-digital.com
+- **Data Access**: divyansh@needle-digital.com
 - **Enterprise Support**: Contact for custom integrations and support plans
 
 ### Community
@@ -434,4 +434,4 @@ We welcome contributions from the community!
 **Developed by Needle Digital**  
 Empowering mining professionals with comprehensive geospatial data solutions.
 
-For questions, support, or data access requests, contact: ahmad@needle-digital.com
+For questions, support, or data access requests, contact: divyansh@needle-digital.com
