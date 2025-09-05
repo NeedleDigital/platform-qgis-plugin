@@ -1,5 +1,5 @@
 """
-Validation utilities for the Needle Digital Mining Data Importer plugin.
+Validation utilities for the ND Data Importer plugin.
 """
 
 import re

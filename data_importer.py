@@ -1,5 +1,5 @@
 """
-Needle Digital Mining Data Importer - Main Plugin Class
+ND Data Importer - Main Plugin Class
 
 A QGIS plugin for importing Australian mining drill hole and assay data.
 This plugin provides seamless access to Australia's comprehensive mining database,
@@ -42,7 +42,7 @@ from .src.config.constants import (  # Configuration constants and thresholds
 logger = get_logger(__name__)
 
 class DataImporter:
-    """Main plugin class for Needle Digital Mining Data Importer.
+    """Main plugin class for ND Data Importer.
     
     This class serves as the entry point for the QGIS plugin and handles:
     - Plugin initialization and lifecycle management

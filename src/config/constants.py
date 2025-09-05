@@ -1,5 +1,5 @@
 """
-Configuration Constants for Needle Digital Mining Data Importer
+Configuration Constants for ND Data Importer
 
 This module contains all configuration constants, thresholds, and static data
 used throughout the plugin. Centralizing these values makes the codebase

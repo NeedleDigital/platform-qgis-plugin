@@ -1,4 +1,4 @@
-# Needle Digital Mining Data Importer - QGIS Plugin
+# ND Data Importer - QGIS Plugin
 
 A comprehensive QGIS plugin for importing and visualizing Australian mining drill hole and assay data directly into your GIS projects.
 
@@ -8,7 +8,7 @@ A comprehensive QGIS plugin for importing and visualizing Australian mining dril
 
 ## 📋 Overview
 
-The Needle Digital Mining Data Importer provides seamless access to Australia's comprehensive mining database, allowing geologists, mining engineers, and researchers to import drill hole and assay data directly into QGIS for spatial analysis and visualization.
+The ND Data Importer provides seamless access to Australia's comprehensive mining database, allowing geologists, mining engineers, and researchers to import drill hole and assay data directly into QGIS for spatial analysis and visualization.
 
 ### Key Features
 
@@ -68,7 +68,7 @@ platform-qgis-plugin/
 
 1. Open QGIS
 2. Navigate to `Plugins` → `Manage and Install Plugins...`
-3. Search for "Needle Digital Mining Data Importer"
+3. Search for "ND Data Importer"
 4. Click `Install Plugin`
 
 #### Method 2: Manual Installation
@@ -101,6 +101,7 @@ cp -r platform-qgis-plugin needle-digital-importer
 **Important**: To access the mining data, you need valid login credentials.
 
 📧 **Contact**: ahmad@needle-digital.com
+
 - Request access to the Needle Digital mining database
 - Provide your organization details and intended use case
 - Receive your login credentials via email
@@ -109,7 +110,7 @@ cp -r platform-qgis-plugin needle-digital-importer
 
 1. Open QGIS
 2. Navigate to `Plugins` → `Manage and Install Plugins...`
-3. Enable "Needle Digital Mining Data Importer"
+3. Enable "ND Data Importer"
 4. The plugin icon will appear in your toolbar
 
 ### 3. First Login
@@ -126,6 +127,7 @@ cp -r platform-qgis-plugin needle-digital-importer
 The plugin features a tabbed interface with two main sections:
 
 #### 🕳️ Holes Tab - Drill Hole Data
+
 - **Purpose**: Import drill hole collar and survey data
 - **Data Includes**: Hole ID, coordinates, depth, company, project details
 - **Filters Available**:
@@ -135,6 +137,7 @@ The plugin features a tabbed interface with two main sections:
   - Depth parameters
 
 #### 🧪 Assays Tab - Chemical Analysis Data
+
 - **Purpose**: Import geochemical assay results
 - **Data Includes**: Sample data with chemical element concentrations
 - **Filters Available**:
@@ -164,6 +167,7 @@ The plugin automatically optimizes performance for large datasets:
 ### Map Visualization
 
 Upon successful import:
+
 - **Point Layers**: Drill holes and assay locations plotted as points
 - **Base Map**: OpenStreetMap automatically added for geographical context
 - **Layer Styling**: Default styling applied with customization options
@@ -209,11 +213,13 @@ DEFAULT_LAYER_STYLE = {
 #### Core Components
 
 1. **DataImporter** (`data_importer.py`)
+
    - Main plugin class and QGIS integration
    - Handles toolbar actions and plugin lifecycle
    - Coordinates between UI and business logic
 
 2. **DataManager** (`src/core/data_manager.py`)
+
    - API communication and data processing
    - Pagination and chunked data fetching
    - Signal-based communication with UI
@@ -226,11 +232,13 @@ DEFAULT_LAYER_STYLE = {
 #### Supporting Components
 
 4. **QGIS Helpers** (`src/utils/qgis_helpers.py`)
+
    - QGIS layer creation and management
    - Spatial data processing
    - Map styling and visualization
 
 5. **API Client** (`src/api/client.py`)
+
    - HTTP communication with Needle Digital API
    - Authentication and session management
    - Error handling and retry logic
@@ -308,6 +316,7 @@ make deploy
 ### Code Style
 
 The project follows PEP 8 standards with:
+
 - Line length: 100 characters
 - Indentation: 4 spaces
 - Import sorting with isort
@@ -319,18 +328,22 @@ The project follows PEP 8 standards with:
 ### Common Issues
 
 #### Authentication Problems
+
 - **Symptom**: Login fails with valid credentials
 - **Solution**: Check internet connection and contact ahmad@needle-digital.com
 
 #### Large Dataset Timeouts
+
 - **Symptom**: Import fails on large datasets
 - **Solution**: Use partial import option or filter data further
 
 #### Memory Issues
+
 - **Symptom**: QGIS becomes unresponsive during import
 - **Solution**: Enable chunked processing for datasets >50,000 records
 
 #### Missing Base Layer
+
 - **Symptom**: No background map visible
 - **Solution**: Check internet connection for OpenStreetMap tiles
 
@@ -385,20 +398,24 @@ We welcome contributions from the community!
 ## 📞 Support & Contact
 
 ### Technical Support
+
 - **Email**: ahmad@needle-digital.com
 - **GitHub Issues**: [Report bugs and feature requests](https://github.com/NeedleDigital/platform-qgis-plugin/issues)
 
 ### Account & Access
+
 - **Data Access**: ahmad@needle-digital.com
 - **Enterprise Support**: Contact for custom integrations and support plans
 
 ### Community
+
 - **Documentation**: [GitHub Wiki](https://github.com/NeedleDigital/platform-qgis-plugin/wiki)
 - **Discussions**: [GitHub Discussions](https://github.com/NeedleDigital/platform-qgis-plugin/discussions)
 
 ## 🔄 Version History
 
 ### v1.0.0 (Current)
+
 - ✅ Complete drill hole and assay data import
 - ✅ State-wise and company-based filtering
 - ✅ Chemical element filtering for assays
@@ -407,6 +424,7 @@ We welcome contributions from the community!
 - ✅ Comprehensive error handling and user feedback
 
 ### Planned Features
+
 - 🔄 **v1.1.0**: Advanced filtering options and data export
 - 🔄 **v1.2.0**: 3D visualization and drill hole profiles
 - 🔄 **v1.3.0**: Statistical analysis tools and reporting

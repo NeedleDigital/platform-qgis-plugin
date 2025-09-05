@@ -1,5 +1,5 @@
 """
-Configuration settings for the Needle Digital Mining Data Importer plugin.
+Configuration settings for the ND Data Importer plugin.
 This module handles configuration loading from environment variables and config files.
 """
 

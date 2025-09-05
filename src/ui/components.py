@@ -1,5 +1,5 @@
 """
-Custom UI components for the Needle Digital Mining Data Importer plugin.
+Custom UI components for the ND Data Importer plugin.
 Contains reusable widgets and layouts for the plugin interface.
 """
 

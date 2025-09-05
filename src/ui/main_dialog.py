@@ -1,5 +1,5 @@
 """
-Main Dialog UI for the Needle Digital Mining Data Importer Plugin
+Main Dialog UI for the ND Data Importer Plugin
 
 This module contains the primary user interface for the mining data importer,
 providing a comprehensive tabbed interface for data exploration and import.

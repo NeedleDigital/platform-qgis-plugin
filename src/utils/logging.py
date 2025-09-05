@@ -1,5 +1,5 @@
 """
-Logging utilities for the Needle Digital Mining Data Importer plugin.
+Logging utilities for the ND Data Importer plugin.
 """
 
 import logging
