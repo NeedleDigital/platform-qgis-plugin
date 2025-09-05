@@ -79,7 +79,7 @@ class DataManager(QObject):
         self._is_fetching = False
         
         # Reset progress and status
-        self.progress_changed.emit(0)
+        self.progress_changed.emit(-1)  # Hide progress bar on cancel
         self.status_changed.emit("Request cancelled by user.")
         
         # Emit loading finished signal for both tabs since we cancelled all requests
@@ -102,14 +102,14 @@ class DataManager(QObject):
             self.error_occurred.emit(VALIDATION_MESSAGES['auth_required'])
             return
         
-        # Store filter parameters
-        self.tab_states[tab_name]['filter_params'] = filter_params.copy()
-        
         # Emit loading started signal
         self.loading_started.emit(tab_name)
         
-        # Clear existing data
-        self._clear_tab_data(tab_name)
+        # Clear existing data but preserve filter_params
+        self._clear_tab_data_only(tab_name)
+        
+        # Store filter parameters after clearing data
+        self.tab_states[tab_name]['filter_params'] = filter_params.copy()
         
         # Set fetching state
         self._is_fetching = True
@@ -137,7 +137,7 @@ class DataManager(QObject):
             
             log_api_request(count_endpoint, filter_params, logger)
             self.status_changed.emit("Calculating total available records...")
-            self.progress_changed.emit(5)
+            self.progress_changed.emit(1)
             
             self.api_client.make_api_request(
                 count_endpoint,
@@ -152,7 +152,7 @@ class DataManager(QObject):
             self.tab_states[tab_name]['total_records'] = requested_records
             
             self.status_changed.emit(f"Preparing to fetch {requested_records} records...")
-            self.progress_changed.emit(5)
+            self.progress_changed.emit(1)
             
             # Start direct fetch without count API
             self._start_sequential_fetch(tab_name, requested_records)
@@ -173,7 +173,7 @@ class DataManager(QObject):
             log_api_response(f"{tab_name.lower()}_count", True, total_count, logger)
             
             if total_count == 0:
-                self.progress_changed.emit(0)  # Reset progress bar
+                self.progress_changed.emit(-1)  # Hide progress bar
                 self.status_changed.emit("No records found matching your criteria.")
                 pagination_info = self._get_pagination_info(tab_name)
                 self.data_ready.emit(tab_name, [], [], pagination_info)
@@ -233,8 +233,8 @@ class DataManager(QObject):
         chunk_params['limit'] = min(API_FETCH_LIMIT, remaining_records)
         chunk_params['skip'] = chunk_index * API_FETCH_LIMIT
         
-        # Update progress
-        progress = int((chunk_index / status['total_chunks']) * 95)  # Leave 5% for processing
+        # Update progress from 1% to 98% (leave 2% for final processing)
+        progress = 1 + int((chunk_index / status['total_chunks']) * 97)
         self.progress_changed.emit(progress)
         self.status_changed.emit(f"Fetching chunk {chunk_index + 1} of {status['total_chunks']}...")
         
@@ -289,9 +289,15 @@ class DataManager(QObject):
             
             log_api_response(f"{tab_name.lower()}_data_chunk", True, len(chunk_data), logger)
             
-            # Check if we're done
-            if (status['next_chunk_index'] >= status['total_chunks'] or 
+            # Check if we're done or if API returned empty results (no more data available)
+            if (len(chunk_data) == 0 or  # Empty response - no more data available
+                status['next_chunk_index'] >= status['total_chunks'] or 
                 len(status['all_data']) >= status['records_to_fetch']):
+                
+                if len(chunk_data) == 0:
+                    logger.info(f"API returned empty results - stopping fetch for {tab_name}")
+                    self.status_changed.emit(f"No more data available. Fetched {len(status['all_data'])} records.")
+                
                 self._finalize_data_fetch()
             else:
                 # Fetch next chunk
@@ -365,7 +371,7 @@ class DataManager(QObject):
         """Clear data for a tab."""
         self._clear_tab_data(tab_name)
         # Reset UI state
-        self.progress_changed.emit(0)
+        self.progress_changed.emit(-1)  # Hide progress bar when clearing data
         self.status_changed.emit("Ready to fetch data.")
         pagination_info = self._get_pagination_info(tab_name)
         self.data_ready.emit(tab_name, [], [], pagination_info)
@@ -378,6 +384,16 @@ class DataManager(QObject):
             'total_records': 0,
             'current_page': 0,
             'filter_params': {}
+        })
+    
+    def _clear_tab_data_only(self, tab_name: str) -> None:
+        """Internal method to clear tab data but preserve filter_params."""
+        self.tab_states[tab_name].update({
+            'data': [],
+            'headers': [],
+            'total_records': 0,
+            'current_page': 0
+            # filter_params preserved
         })
     
     def _handle_api_response(self, endpoint: str, response_data: Dict[str, Any]) -> None:
@@ -395,7 +411,7 @@ class DataManager(QObject):
             self.batch_fetch_status = None
         
         self._is_fetching = False
-        self.progress_changed.emit(0)
+        self.progress_changed.emit(-1)  # Hide progress bar on error
         self.status_changed.emit("Ready for next request.")
         
         # Emit loading finished signal for both tabs since we don't know which one failed

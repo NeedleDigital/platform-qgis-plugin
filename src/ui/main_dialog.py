@@ -224,6 +224,8 @@ class DataImporterDialog(QDialog):
         # Data table
         table = QTableWidget()
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        # Make table read-only
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
         
         # Loading label
         loading_label = QLabel("Waiting for data...")
@@ -388,9 +390,12 @@ class DataImporterDialog(QDialog):
             if companies:
                 params['companies'] = ",".join(companies)
         else:  # Assays
-            params['element'] = tab_widgets['element_input'].currentData()
+            element = tab_widgets['element_input'].currentData()
             operator = tab_widgets['operator_input'].currentText()
             value = tab_widgets['value_input'].text().strip()
+            
+            # Element is required for assays API
+            params['element'] = element
             
             # Only add operator and value if operator is not "None"
             if operator != "None":
@@ -444,7 +449,7 @@ class DataImporterDialog(QDialog):
     
     def update_progress(self, value: int):
         """Update progress bar."""
-        if value > 0:
+        if value >= 0:
             self.progress_bar.setVisible(True)
             self.progress_bar.setValue(value)
         else:
@@ -563,6 +568,10 @@ class DataImporterDialog(QDialog):
         loading_label.setText("Loading data...")
         content_stack.setCurrentWidget(loading_label)
         
+        # Show progress bar immediately when loading starts at 1%
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setValue(1)
+        
         # Hide other components during loading
         import_button.setVisible(False)
         pagination_widget.setVisible(False)
@@ -584,6 +593,9 @@ class DataImporterDialog(QDialog):
         
         # Re-enable fetch button
         fetch_button.setEnabled(True)
+        
+        # Hide progress bar when loading is complete
+        self.progress_bar.setVisible(False)
         
         # Restore original waiting message
         loading_label.setText("Waiting for data...")
