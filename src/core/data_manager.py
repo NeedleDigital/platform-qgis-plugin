@@ -162,8 +162,6 @@ class DataManager(QObject):
                               fetch_all: bool) -> None:
         """Handle the response from count API."""
         try:
-            print(f"[DEBUG] Count response structure: keys={list(response_data.keys())}")
-            print(f"[DEBUG] Full count response: {response_data}")
             
             logger.info(f"Count response structure: keys={list(response_data.keys())}")
             logger.info(f"Full count response: {response_data}")
@@ -269,12 +267,6 @@ class DataManager(QObject):
             else:
                 headers = self.tab_states[tab_name]['headers']
             
-            print(f"[DEBUG] Chunk response structure: keys={list(response_data.keys())}")
-            print(f"[DEBUG] Full response: {response_data}")
-            print(f"[DEBUG] Chunk data length: {len(chunk_data)}")
-            print(f"[DEBUG] Headers: {headers}")
-            if chunk_data:
-                print(f"[DEBUG] First chunk record: {chunk_data[0]}")
             
             logger.info(f"Chunk response structure: keys={list(response_data.keys())}")
             logger.info(f"Chunk data length: {len(chunk_data)}")

@@ -571,10 +571,10 @@ class LargeImportWarningDialog(QDialog):
         message_text = f"""
 You are about to import {record_count:,} records to QGIS.
 
-<b>Performance Impact:</b>
-• QGIS may become unresponsive during import
-• Large datasets can cause memory issues
-• Consider importing a subset for testing first
+Performance Impact:
+• QGIS may become unresponsive during import.
+• Large datasets can cause memory issues.
+• Consider importing a subset for testing first.
         """
         
         message_label = QLabel(message_text)

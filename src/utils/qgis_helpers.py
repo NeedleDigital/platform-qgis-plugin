@@ -11,7 +11,7 @@ from qgis.core import (
 from qgis.PyQt.QtCore import QVariant
 from qgis.PyQt.QtGui import QColor
 
-from ..config.constants import DEFAULT_LAYER_STYLE, IMPORT_CHUNK_SIZE, OSM_LAYER_NAME, OSM_LAYER_URL
+from ..config.constants import DEFAULT_LAYER_STYLE, IMPORT_CHUNK_SIZE, OSM_LAYER_NAME, OSM_LAYER_URL, AUTO_ZOOM_THRESHOLD
 from .logging import get_logger
 
 logger = get_logger(__name__)
@@ -327,7 +327,7 @@ class QGISLayerManager:
             QgsProject.instance().addMapLayer(layer)
             
             # Zoom to layer if interface available (but not for very large datasets)
-            if self.iface and total_features_added < 50000:
+            if self.iface and total_features_added < AUTO_ZOOM_THRESHOLD:
                 self.iface.zoomToActiveLayer()
             
             success_msg = f"Successfully imported {total_features_added:,} records in {(total_records + chunk_size - 1) // chunk_size} chunks"

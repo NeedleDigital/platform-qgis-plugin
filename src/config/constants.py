@@ -27,6 +27,9 @@ CHUNKED_IMPORT_THRESHOLD = 5000  # Use chunked import above this count
 OSM_LAYER_NAME = "OpenStreetMap"
 OSM_LAYER_URL = "type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png&zmax=19&zmin=0&crs=EPSG3857"
 
+# Layer management configuration
+AUTO_ZOOM_THRESHOLD = 50000  # Don't auto-zoom for datasets larger than this
+
 # Australian states and territories
 AUSTRALIAN_STATES: List[Tuple[str, str]] = [
     ("New South Wales", "NSW"),
