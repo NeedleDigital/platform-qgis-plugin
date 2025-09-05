@@ -453,8 +453,14 @@ class DataImporterDialog(QDialog):
             table.setColumnCount(len(headers))
             table.setHorizontalHeaderLabels(headers)
             
-            # Populate table with current page data
+            # Populate table with current page data and set global row indices
             for row_idx, record in enumerate(page_data):
+                # Calculate global row number (1-based)
+                global_row_number = start_idx + row_idx + 1
+                
+                # Set the row header to show global index
+                table.setVerticalHeaderItem(row_idx, QTableWidgetItem(str(global_row_number)))
+                
                 for col_idx, header in enumerate(headers):
                     value = record.get(header, '')
                     item = QTableWidgetItem(str(value) if value is not None else '')
@@ -471,7 +477,7 @@ class DataImporterDialog(QDialog):
             if pagination_info['has_data'] and pagination_info['total_pages'] > 1:
                 pagination_widget.setVisible(True)
                 page_text = f"Page {pagination_info['current_page']} of {pagination_info['total_pages']}"
-                page_text += f" (showing {len(page_data)} of {pagination_info['total_records']} records)"
+                page_text += f" (showing {pagination_info['total_records']} records)"
                 page_label.setText(page_text)
                 
                 # Enable/disable navigation buttons
