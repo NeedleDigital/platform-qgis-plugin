@@ -47,3 +47,29 @@ Thumbs.db
 backup/
 *.bak
 *.orig
+
+# Generated files
+ui_*.py
+resources_rc.py
+*_rc.py
+
+# Qt files
+*.qm
+*.ts
+*.pro
+
+# System/Hidden directories
+.claude/
+__MACOSX/
+
+# Test files (if recreated)
+test/
+tests/
+
+# Temporary files
+*.tmp
+*~
+
+# Help files
+help/_build/
+help/build/
