@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Environment variables and secrets
+src/config/secrets.env
+*.env
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# QGIS
+*.qgs
+*.qgs~
+
+# Logs
+*.log
+
+# Backup files
+backup/
+*.bak
+*.orig
+
+# Generated files
+ui_*.py
+resources_rc.py
+*_rc.py
+
+# Qt files
+*.qm
+*.ts
+*.pro
+
+# System/Hidden directories
+.claude/
+__MACOSX/
+
+# Test files (if recreated)
+test/
+tests/
+
+# Temporary files
+*.tmp
+*~
+
+# Help files
+help/_build/
+help/build/

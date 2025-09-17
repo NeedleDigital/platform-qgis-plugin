@@ -1,0 +1,46 @@
+# ND Data Importer Plugin Metadata
+# This file contains metadata for the QGIS plugin
+
+[general]
+name=ND Data Importer
+qgisMinimumVersion=3.0
+description=Comprehensive QGIS plugin for importing Australian mining drill hole and assay data with advanced filtering and large dataset optimization
+version=1.0.0
+author=Needle Digital
+email=divyansh@needle-digital.com
+
+about=The ND Data Importer provides seamless access to Australia's comprehensive mining database. Import drill hole collar, survey, and assay data directly into QGIS with state-wise filtering, company search, chemical element analysis, and optimized handling of large datasets (1M+ records). Features include automatic OpenStreetMap base layer integration, chunked processing for performance, real-time progress tracking, and user-friendly tabbed interface. Perfect for geologists, mining engineers, and researchers requiring spatial analysis of Australian mining data.
+
+# Project links
+tracker=https://github.com/NeedleDigital/platform-qgis-plugin/issues
+repository=https://github.com/NeedleDigital/platform-qgis-plugin
+homepage=https://github.com/NeedleDigital/platform-qgis-plugin
+
+# Plugin configuration
+hasProcessingProvider=no
+category=Database
+icon=icon.png
+experimental=False
+deprecated=False
+server=False
+
+# Tags for discoverability - comma separated
+tags=mining, drill hole, assay, geochemistry, database, australia, import, data
+
+# Changelog
+changelog=
+    1.0.0 - Initial release
+        - Complete drill hole and assay data import functionality
+        - State-wise and company-based data filtering
+        - Chemical element filtering with comparison operators
+        - Large dataset optimization (supports 1M+ records)
+        - Automatic OpenStreetMap base layer integration
+        - Chunked processing with progress tracking and cancellation
+        - Memory management and performance optimization
+        - Comprehensive error handling and user feedback
+        - Minimize/maximize dialog window support
+        - Professional UI with tabbed interface
+
+# No external plugin dependencies required
+# All dependencies are standard Python/QGIS libraries
+
