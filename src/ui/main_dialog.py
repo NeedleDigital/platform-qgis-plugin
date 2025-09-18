@@ -49,7 +49,7 @@ from ..config.constants import (
     LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY, MAX_SAFE_IMPORT_LOCATION_ONLY,
     PARTIAL_IMPORT_LIMIT_LOCATION_ONLY
 )
-from ..utils.logging import get_logger, log_user_action
+from ..utils.logging import get_logger
 
 logger = get_logger(__name__)
 

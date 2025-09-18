@@ -5,34 +5,38 @@ Uses New Relic cloud logging API with crash-safe initialization.
 
 import json
 import logging
+import ssl
 import sys
+import threading
+import urllib.request
+import urllib.parse
 from typing import Optional
 
 
 # Global variables - no Qt objects created during import
 _newrelic_logger = None
-_logging_enabled = False  # TEMPORARILY DISABLE ALL LOGGING TO FIX CRASHES
+_logging_enabled = True  # Thread-safe implementation, safe to enable by default
 
 
 class SafeNewRelicLogger:
-    """New Relic cloud logger with delayed Qt initialization."""
+    """New Relic cloud logger with thread-safe HTTP implementation."""
 
     def __init__(self):
         import os
         from pathlib import Path
 
-        self.network_manager = None
         self.api_url = "https://log-api.eu.newrelic.com/log/v1"
+        self.api_key = ""
+        self._env_loaded = False
 
-        # Load environment variables from .env file if it exists
-        self._load_env_file()
+        # Don't load anything during init to prevent crashes
+        # Everything will be loaded on first use
 
-        # Try to get API key from environment variable, fallback to empty string
-        self.api_key = os.getenv("NEW_RELIC_API_KEY", "")
-        self._qt_available = False
+    def _ensure_env_loaded(self):
+        """Load environment variables from .env file if not already loaded."""
+        if self._env_loaded:
+            return
 
-    def _load_env_file(self):
-        """Load environment variables from .env file if it exists."""
         import os
         from pathlib import Path
 
@@ -47,37 +51,63 @@ class SafeNewRelicLogger:
                         line = line.strip()
                         if line and not line.startswith('#') and '=' in line:
                             key, value = line.split('=', 1)
-                            os.environ[key.strip()] = value.strip()
-        except Exception as e:
-            # Silently fail if env file can't be loaded
-            print(f"Note: Could not load .env file: {e}")
+                            key = key.strip()
+                            value = value.strip()
+                            os.environ[key] = value
 
-    def _init_qt_components(self):
-        """Initialize Qt components only when needed."""
-        if self._qt_available:
-            return True
-
-        try:
-            # Import Qt classes only when actually needed
-            from qgis.PyQt.QtCore import QObject, QUrl, QByteArray
-            from qgis.PyQt.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
-
-            # Store Qt classes as instance variables
-            self.QObject = QObject
-            self.QUrl = QUrl
-            self.QByteArray = QByteArray
-            self.QNetworkAccessManager = QNetworkAccessManager
-            self.QNetworkRequest = QNetworkRequest
-            self.QNetworkReply = QNetworkReply
-
-            # Create network manager
-            self.network_manager = QNetworkAccessManager()
-            self._qt_available = True
-            return True
+            # Load API key
+            self.api_key = os.getenv("NEW_RELIC_API_KEY", "")
+            self._env_loaded = True
 
         except Exception as e:
-            print(f"Qt components not available for logging: {e}")
-            return False
+            # Silent fail to prevent crashes
+            self._env_loaded = True
+
+    def _send_log_async(self, message: str, logtype: str):
+        """Send log message to New Relic asynchronously in a separate thread."""
+        def send_request():
+            try:
+                payload = {
+                    "message": message,
+                    "logtype": logtype
+                }
+
+                data = json.dumps(payload).encode('utf-8')
+
+                req = urllib.request.Request(
+                    self.api_url,
+                    data=data,
+                    headers={
+                        'Api-Key': self.api_key,
+                        'Content-Type': 'application/json'
+                    }
+                )
+
+                # Create SSL context that doesn't verify certificates (for development)
+                ssl_context = ssl.create_default_context()
+                ssl_context.check_hostname = False
+                ssl_context.verify_mode = ssl.CERT_NONE
+
+                with urllib.request.urlopen(req, timeout=10, context=ssl_context) as response:
+                    status_code = response.getcode()
+                    if status_code in (200, 202):  # 200 = OK, 202 = Accepted
+                        print(f"✅ New Relic log sent successfully")
+                    else:
+                        print(f"❌ New Relic API error: HTTP {status_code}")
+
+            except urllib.error.HTTPError as e:
+                if e.code == 401:
+                    print(f"❌ New Relic API error: 401 Unauthorized - Invalid or missing API key")
+                elif e.code == 403:
+                    print(f"❌ New Relic API error: 403 Forbidden - API key lacks required permissions")
+                else:
+                    print(f"❌ New Relic API error: HTTP {e.code} - {e.reason}")
+            except Exception as e:
+                print(f"❌ New Relic request failed: {e}")
+
+        # Run in background thread to avoid blocking QGIS
+        thread = threading.Thread(target=send_request, daemon=True)
+        thread.start()
 
     def send_log(self, message: str, logtype: str = "info"):
         """Send log message to New Relic."""
@@ -87,43 +117,33 @@ class SafeNewRelicLogger:
             return
 
         try:
-            # Try to initialize Qt components if not already done
-            if not self._init_qt_components():
-                print(f"📝 New Relic logging unavailable: {message}")
+            # Load environment variables if not loaded
+            self._ensure_env_loaded()
+
+            if not self.api_key:
                 return
 
-            payload = {
-                "message": message,
-                "logtype": logtype
-            }
+            # Send log asynchronously to avoid blocking QGIS
+            self._send_log_async(message, logtype)
 
-            request = self.QNetworkRequest(self.QUrl(self.api_url))
-            request.setRawHeader(self.QByteArray(b"Api-Key"), self.QByteArray(self.api_key.encode()))
-            request.setRawHeader(self.QByteArray(b"Content-Type"), self.QByteArray(b"application/json"))
+        except Exception:
+            # Silent fail to prevent crashes
+            pass
 
-            data = self.QByteArray(json.dumps(payload).encode('utf-8'))
-            reply = self.network_manager.post(request, data)
 
-            print(f"📤 Sending to New Relic [{logtype.upper()}]: {message}")
-            reply.finished.connect(lambda: self._handle_response(reply, message, logtype))
 
-        except Exception as e:
-            print(f"❌ New Relic logging failed: {e}")
-            # Disable logging to prevent repeated crashes
-            _logging_enabled = False
+def enable_safe_logging():
+    """Enable New Relic logging - now thread-safe without Qt dependencies."""
+    global _logging_enabled
+    _logging_enabled = True
 
-    def _handle_response(self, reply, original_message: str, logtype: str):
-        """Handle the response from New Relic API."""
-        try:
-            if reply.error() == self.QNetworkReply.NoError:
-                print(f"✅ New Relic log sent successfully [{logtype.upper()}]: {original_message}")
-            else:
-                error_msg = reply.errorString()
-                print(f"❌ New Relic API error: {error_msg}")
-        except Exception as e:
-            print(f"❌ Error handling New Relic response: {e}")
-        finally:
-            reply.deleteLater()
+
+def disable_logging():
+    """Disable New Relic logging."""
+    global _logging_enabled
+    _logging_enabled = False
+
+
 
 
 def get_newrelic_logger():
@@ -132,8 +152,7 @@ def get_newrelic_logger():
     if _newrelic_logger is None:
         try:
             _newrelic_logger = SafeNewRelicLogger()
-        except Exception as e:
-            print(f"Failed to create New Relic logger: {e}")
+        except Exception:
             return None
     return _newrelic_logger
 
@@ -186,40 +205,3 @@ def log_api_response(endpoint: str, success: bool, data_count: int, logger: logg
         pass  # Silently fail to prevent crashes
 
 
-def log_user_action(action: str, details: str, logger: logging.Logger = None) -> None:
-    """Log user actions to New Relic."""
-    message = f"User Action - {action}: {details}"
-    try:
-        if logger:
-            logger.info(message)
-        nr_logger = get_newrelic_logger()
-        if nr_logger:
-            nr_logger.send_log(message, "info")
-    except Exception:
-        pass  # Silently fail to prevent crashes
-
-
-def log_error(error_message: str, context: str = "", logger: logging.Logger = None) -> None:
-    """Log error messages to New Relic."""
-    message = f"Error in {context}: {error_message}" if context else f"Error: {error_message}"
-    try:
-        if logger:
-            logger.error(message)
-        nr_logger = get_newrelic_logger()
-        if nr_logger:
-            nr_logger.send_log(message, "error")
-    except Exception:
-        pass  # Silently fail to prevent crashes
-
-
-def log_warning(warning_message: str, context: str = "", logger: logging.Logger = None) -> None:
-    """Log warning messages to New Relic."""
-    message = f"Warning in {context}: {warning_message}" if context else f"Warning: {warning_message}"
-    try:
-        if logger:
-            logger.warning(message)
-        nr_logger = get_newrelic_logger()
-        if nr_logger:
-            nr_logger.send_log(message, "warning")
-    except Exception:
-        pass  # Silently fail to prevent crashes

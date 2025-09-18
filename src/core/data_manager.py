@@ -187,7 +187,10 @@ class DataManager(QObject):
             else:
                 selected_states = []  # "All States" case
             
-            is_valid, error_msg = validate_fetch_all_request(selected_states)
+            # Check if this is a location-only request
+            fetch_location_only = filter_params.get('fetch_only_location', False)
+            is_valid, error_msg = validate_fetch_all_request(selected_states, fetch_location_only)
+
             if not is_valid:
                 self._is_fetching = False
                 self.loading_finished.emit(tab_name)

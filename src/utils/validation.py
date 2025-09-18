@@ -20,24 +20,29 @@ def validate_email(email: str) -> bool:
         return False
     return bool(re.match(r"[^@]+@[^@]+\.[^@]+", email))
 
-def validate_fetch_all_request(selected_states: List[str]) -> Tuple[bool, Optional[str]]:
+def validate_fetch_all_request(selected_states: List[str], fetch_location_only: bool = False) -> Tuple[bool, Optional[str]]:
     """
     Validate fetch all records request.
-    
+
     Args:
         selected_states: List of selected state codes
-        
+        fetch_location_only: Whether this is a location-only fetch request
+
     Returns:
         Tuple of (is_valid, error_message)
     """
+    # If fetch location only is enabled, allow any number of states (including 0 or multiple)
+    if fetch_location_only:
+        return True, None
+
     if len(selected_states) == 0:
-        # No states selected is not allowed for fetch all
+        # No states selected is not allowed for fetch all (unless location only)
         return False, VALIDATION_MESSAGES['fetch_all_no_state']
     elif len(selected_states) == 1:
         # Single state is allowed
         return True, None
     else:
-        # Multiple states not allowed for fetch all
+        # Multiple states not allowed for fetch all (unless location only)
         return False, VALIDATION_MESSAGES['fetch_all_multiple_states']
 
 def validate_assay_filter(element: str, operator: str, value: str) -> Tuple[bool, Optional[str]]:
