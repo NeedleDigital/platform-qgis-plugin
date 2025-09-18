@@ -23,8 +23,9 @@ Technical Features:
     - Error handling and user feedback
 
 Coordinate System:
-    Uses Australian GDA2020 (EPSG:7844) as the default coordinate reference
-    system, appropriate for Australian mining data visualization.
+    Uses WGS84 (EPSG:4326) as the coordinate reference system since mining data
+    is typically provided in latitude/longitude coordinates. Proper CRS transformations
+    are handled automatically when zooming to ensure accurate visualization.
 
 Author: Needle Digital
 Contact: divyansh@needle-digital.com
@@ -32,17 +33,17 @@ Contact: divyansh@needle-digital.com
 
 from typing import List, Dict, Any, Optional, Tuple
 from qgis.core import (
-    QgsVectorLayer, QgsRasterLayer, QgsFeature, QgsGeometry, QgsPoint, QgsField, 
+    QgsVectorLayer, QgsRasterLayer, QgsFeature, QgsGeometry, QgsPoint, QgsField,
     QgsProject, QgsSymbol, QgsSingleSymbolRenderer, QgsMessageLog,
-    Qgis, QgsCoordinateReferenceSystem
+    Qgis, QgsCoordinateReferenceSystem, QgsCoordinateTransform
 )
 from qgis.PyQt.QtCore import QVariant
 from qgis.PyQt.QtGui import QColor
 
 # Configuration imports for styling and thresholds
 from ..config.constants import (
-    DEFAULT_LAYER_STYLE, IMPORT_CHUNK_SIZE, OSM_LAYER_NAME, 
-    OSM_LAYER_URL, AUTO_ZOOM_THRESHOLD
+    DEFAULT_LAYER_STYLE, IMPORT_CHUNK_SIZE, OSM_LAYER_NAME,
+    OSM_LAYER_URL
 )
 from .logging import get_logger
 
@@ -104,8 +105,8 @@ class QGISLayerManager:
             if not data:
                 return False, "No data to import"
             
-            # Create layer with CRS (Australian GDA2020)
-            crs = QgsCoordinateReferenceSystem("EPSG:7844")
+            # Create layer with WGS84 CRS since data is in lat/lon coordinates
+            crs = QgsCoordinateReferenceSystem("EPSG:4326")
             layer = QgsVectorLayer(f"Point?crs={crs.authid()}", layer_name, "memory")
             
             if not layer.isValid():
@@ -137,7 +138,7 @@ class QGISLayerManager:
             
             # Zoom to layer if interface available
             if self.iface:
-                self.iface.zoomToActiveLayer()
+                self._zoom_to_layer(layer)
             
             logger.info(f"Created layer '{layer_name}' with {len(features)} features")
             return True, f"Successfully imported {len(features)} records"
@@ -247,6 +248,64 @@ class QGISLayerManager:
             
         except Exception as e:
             logger.warning(f"Failed to apply layer styling: {e}")
+
+    def _zoom_to_layer(self, layer: QgsVectorLayer):
+        """Zoom to the full extent of the layer with proper CRS transformation."""
+        try:
+            if not self.iface or not layer.isValid():
+                return
+
+            # Get layer extent in layer's CRS
+            layer_extent = layer.extent()
+            if layer_extent.isEmpty():
+                logger.warning("Layer extent is empty, cannot zoom")
+                return
+
+            map_canvas = self.iface.mapCanvas()
+
+            # Get the layer and canvas CRS
+            layer_crs = layer.crs()
+            canvas_crs = map_canvas.mapSettings().destinationCrs()
+
+            logger.info(f"Layer CRS: {layer_crs.authid()}, Canvas CRS: {canvas_crs.authid()}")
+            logger.info(f"Layer extent before transform: {layer_extent}")
+
+            # Transform extent if CRS differs
+            extent_to_use = layer_extent
+            if layer_crs != canvas_crs:
+                transform = QgsCoordinateTransform(layer_crs, canvas_crs, QgsProject.instance())
+                try:
+                    extent_to_use = transform.transformBoundingBox(layer_extent)
+                    logger.info(f"Transformed extent: {extent_to_use}")
+                except Exception as transform_error:
+                    logger.warning(f"Failed to transform extent: {transform_error}, using original")
+                    extent_to_use = layer_extent
+
+            # Add some padding around the data (10% buffer)
+            width = extent_to_use.width()
+            height = extent_to_use.height()
+
+            if width > 0 and height > 0:
+                buffer_x = width * 0.1
+                buffer_y = height * 0.1
+                extent_to_use.setXMinimum(extent_to_use.xMinimum() - buffer_x)
+                extent_to_use.setXMaximum(extent_to_use.xMaximum() + buffer_x)
+                extent_to_use.setYMinimum(extent_to_use.yMinimum() - buffer_y)
+                extent_to_use.setYMaximum(extent_to_use.yMaximum() + buffer_y)
+
+            # Set the extent to the map canvas
+            map_canvas.setExtent(extent_to_use)
+            map_canvas.refresh()
+
+            logger.info(f"Zoomed to extent: {extent_to_use}")
+
+        except Exception as e:
+            logger.error(f"Failed to zoom to layer: {e}")
+            # Fallback to default zoom method
+            try:
+                self.iface.zoomToActiveLayer()
+            except Exception as fallback_error:
+                logger.error(f"Fallback zoom also failed: {fallback_error}")
     
     def show_message(self, message: str, level: Qgis.MessageLevel = Qgis.Info, 
                     duration: int = 3) -> None:
@@ -316,8 +375,8 @@ class QGISLayerManager:
             total_records = len(data)
             logger.info(f"Starting chunked import of {total_records} records")
             
-            # Create layer with CRS (Australian GDA2020)
-            crs = QgsCoordinateReferenceSystem("EPSG:7844")
+            # Create layer with WGS84 CRS since data is in lat/lon coordinates
+            crs = QgsCoordinateReferenceSystem("EPSG:4326")
             layer = QgsVectorLayer(f"Point?crs={crs.authid()}", layer_name, "memory")
             
             if not layer.isValid():
@@ -385,9 +444,9 @@ class QGISLayerManager:
             # Add to project
             QgsProject.instance().addMapLayer(layer)
             
-            # Zoom to layer if interface available (but not for very large datasets)
-            if self.iface and total_features_added < AUTO_ZOOM_THRESHOLD:
-                self.iface.zoomToActiveLayer()
+            # Always zoom to layer if interface available
+            if self.iface:
+                self._zoom_to_layer(layer)
             
             success_msg = f"Successfully imported {total_features_added:,} records in {(total_records + chunk_size - 1) // chunk_size} chunks"
             logger.info(f"Chunked import completed: {success_msg}")

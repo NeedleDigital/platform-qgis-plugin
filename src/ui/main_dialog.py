@@ -37,7 +37,7 @@ from qgis.PyQt.QtWidgets import (
     QFormLayout, QSpacerItem, QSizePolicy, QHeaderView, QMessageBox,
     QStackedLayout, QComboBox, QCheckBox
 )
-from qgis.PyQt.QtGui import QFont
+from qgis.PyQt.QtGui import QFont, QCursor, QDoubleValidator
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer
 
 from .components import (
@@ -221,31 +221,76 @@ class DataImporterDialog(QDialog):
             
             value_input = QLineEdit()
             value_input.setEnabled(False)  # Initially disabled since "None" is default
+            value_input.setPlaceholderText("Select an operator first")
+
+            # Add numeric validator - allows positive and negative numbers with decimals
+            validator = QDoubleValidator()
+            validator.setDecimals(10)  # Allow up to 10 decimal places
+            validator.setNotation(QDoubleValidator.StandardNotation)
+            value_input.setValidator(validator)
+
+            # Add validation feedback on text change
+            def on_value_text_changed(text):
+                if not text:  # Empty text is valid
+                    return
+                # Check if the text is a valid number
+                try:
+                    float(text)
+                    value_input.setStyleSheet("")  # Clear any error styling
+                except ValueError:
+                    # Invalid number - show error styling
+                    value_input.setStyleSheet("border: 1px solid red; background-color: #ffe6e6;")
+                    value_input.setToolTip("Please enter a valid numeric value (e.g., 1.5, -2.0, 100)")
+
+            value_input.textChanged.connect(on_value_text_changed)
+
+            # Create value input with ppm suffix
+            value_container = QWidget()
+            value_container_layout = QHBoxLayout(value_container)
+            value_container_layout.setContentsMargins(0, 0, 0, 0)
+            value_container_layout.setSpacing(2)
+            value_container_layout.addWidget(value_input)
+
+            ppm_label = QLabel("ppm")
+            ppm_label.setStyleSheet("color: #666; font-style: italic;")
+            ppm_label.mousePressEvent = lambda _: self.show_ppm_info()
+            ppm_label.setCursor(QCursor(Qt.PointingHandCursor))
+            ppm_label.setToolTip("Click for more information about supported units")
+            value_container_layout.addWidget(ppm_label)
             
             # Connect operator change to enable/disable value field
             def on_operator_changed():
                 is_none_selected = operator_input.currentText() == "None"
+                # Enable/disable the actual input field, not the container
                 value_input.setEnabled(not is_none_selected)
                 if is_none_selected:
                     value_input.clear()
-            
+                    value_input.setPlaceholderText("Select an operator first")
+                    value_input.setStyleSheet("")  # Clear any error styling
+                    value_input.setToolTip("")  # Clear error tooltip
+                else:
+                    value_input.setPlaceholderText("Enter numeric value")
+                    value_input.setStyleSheet("")  # Clear any error styling
+                    value_input.setToolTip("")  # Clear error tooltip
+
             operator_input.currentTextChanged.connect(on_operator_changed)
-            
+
             element_layout = QHBoxLayout()
             element_layout.setContentsMargins(0, 0, 0, 0)
-            element_layout.addWidget(QLabel("Element:"))
+            # element_layout.addWidget(QLabel("Element:"))
             element_layout.addWidget(element_input)
             element_layout.addSpacing(20)
             element_layout.addWidget(QLabel("Filter by Value:"))
             element_layout.addWidget(operator_input)
-            element_layout.addWidget(value_input)
+            element_layout.addWidget(value_container)
             element_layout.addStretch()
-            controls_layout.addRow(element_layout)
+            controls_layout.addRow("Assay Filter:", element_layout)
             
             widgets.update({
                 'element_input': element_input,
                 'operator_input': operator_input,
-                'value_input': value_input
+                'value_input': value_input,
+                'value_container': value_container
             })
             
             # Record count controls
@@ -724,7 +769,16 @@ class DataImporterDialog(QDialog):
     def show_info(self, message: str):
         """Show information message."""
         QMessageBox.information(self, "Information", message)
-    
+
+    def show_ppm_info(self):
+        """Show information about supported measurement units."""
+        QMessageBox.information(
+            self,
+            "Measurement Units",
+            "Currently our system only serves ppm (parts per million) values.\n"
+            "We will be adding more measurement units in the future."
+        )
+
     def show_cancel_button(self):
         """Show the cancel request button during API calls."""
         self.cancel_button.setVisible(True)
@@ -914,6 +968,9 @@ class DataImporterDialog(QDialog):
         # Clear and disable value input
         assays_tab['value_input'].clear()
         assays_tab['value_input'].setEnabled(False)
+        assays_tab['value_input'].setPlaceholderText("Select an operator first")
+        assays_tab['value_input'].setStyleSheet("")  # Clear any error styling
+        assays_tab['value_input'].setToolTip("")  # Clear error tooltip
         
         # Reset record count and fetch all checkbox
         assays_tab['count_input'].setText("100")
