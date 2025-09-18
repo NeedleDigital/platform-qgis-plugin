@@ -36,26 +36,38 @@ PLUGIN_DESCRIPTION = "Import Australian mining drill hole data into QGIS"
 # API Configuration
 NEEDLE_FIREBASE_API_KEY = "AIzaSyCuX5I0TaQCVmIUVdo1uM_aOQ3zVkrUV8Y"
 NEEDLE_BASE_API_URL = "https://master.api.agni.needle-digital.com"
-API_FETCH_LIMIT = 50000  # Maximum records per API request
 
-# Location-only API configuration (4x limits for coordinate data)
-API_FETCH_LIMIT_LOCATION_ONLY = 200000  # 4x limit for location-only requests
-LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY = 200000  # 4x warning threshold
-MAX_SAFE_IMPORT_LOCATION_ONLY = 400000  # 4x safe import limit
-PARTIAL_IMPORT_LIMIT_LOCATION_ONLY = 200000  # 4x partial import limit
+# API Request Limits
+# Used in: src/core/data_manager.py for chunking API requests
+API_FETCH_LIMIT = 50000  # Maximum records per API request for full data
+API_FETCH_LIMIT_LOCATION_ONLY = 200000  # 4x limit for location-only requests (coordinates only)
 
-# Import configuration
-IMPORT_CHUNK_SIZE = 10000  # Records per import chunk
-LARGE_IMPORT_WARNING_THRESHOLD = 50000  # Show warning above this count
-MAX_SAFE_IMPORT = 100000  # Recommend alternatives above this count
-PARTIAL_IMPORT_LIMIT = 50000  # Maximum records for partial import
-CHUNKED_IMPORT_THRESHOLD = 5000  # Use chunked import above this count
+# Large Dataset Warning Thresholds
+# Used in: data_importer.py to show warning dialog before importing large datasets
+LARGE_IMPORT_WARNING_THRESHOLD = 50000  # Show warning above this count (full data)
+LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY = 200000  # Warning threshold for location-only data
+
+# Import Safety Limits
+# Used in: src/ui/components.py (LargeImportWarningDialog) for button styling and recommendations
+MAX_SAFE_IMPORT = 100000  # Mark "Import All" as not recommended above this count (full data)
+MAX_SAFE_IMPORT_LOCATION_ONLY = 400000  # Safe import limit for location-only data
+
+# Partial Import Limits
+# Used in: data_importer.py for "Import First X Records" functionality
+PARTIAL_IMPORT_LIMIT = 50000  # Maximum records for partial import (full data)
+PARTIAL_IMPORT_LIMIT_LOCATION_ONLY = 200000  # Maximum records for partial import (location-only)
+
+# Performance Configuration
+# Used in: src/utils/qgis_helpers.py for chunked imports and performance optimization
+IMPORT_CHUNK_SIZE = 10000  # Records per import chunk to prevent memory issues
+CHUNKED_IMPORT_THRESHOLD = 5000  # Use chunked import above this count for better performance
 
 # OpenStreetMap base layer configuration
 OSM_LAYER_NAME = "OpenStreetMap"
 OSM_LAYER_URL = "type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png&zmax=19&zmin=0&crs=EPSG3857"
 
-# Layer management configuration
+# UI Performance Configuration
+# Used in: src/utils/qgis_helpers.py to skip auto-zoom for large datasets (prevents UI freezing)
 AUTO_ZOOM_THRESHOLD = 50000  # Don't auto-zoom for datasets larger than this
 
 # Australian states and territories

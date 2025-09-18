@@ -35,8 +35,9 @@ from .src.ui.components import (  # Reusable UI components and dialogs
 from .src.utils.qgis_helpers import QGISLayerManager  # QGIS integration utilities
 from .src.utils.logging import get_logger  # Centralized logging system
 from .src.config.constants import (  # Configuration constants and thresholds
-    PLUGIN_NAME, PLUGIN_VERSION, LARGE_IMPORT_WARNING_THRESHOLD, 
-    PARTIAL_IMPORT_LIMIT, CHUNKED_IMPORT_THRESHOLD
+    PLUGIN_NAME, PLUGIN_VERSION, LARGE_IMPORT_WARNING_THRESHOLD,
+    LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY, PARTIAL_IMPORT_LIMIT,
+    PARTIAL_IMPORT_LIMIT_LOCATION_ONLY, CHUNKED_IMPORT_THRESHOLD
 )
 
 logger = get_logger(__name__)
@@ -394,15 +395,18 @@ class DataImporter:
         try:
             # Get data from data manager - includes both data rows and column headers
             data, headers = self.data_manager.get_tab_data(tab_name)
-            
+
+            # Check if this is location-only data
+            is_location_only = self.data_manager.is_tab_location_only(tab_name)
+
             # Validate that we have data to import
             if not data:
                 self.dlg.show_error("No data available to import.")
                 return
-            
+
             record_count = len(data)
-            logger.info(f"Import requested: {record_count} records to layer '{layer_name}'")
-            
+            logger.info(f"Import requested: {record_count} records to layer '{layer_name}' (location_only: {is_location_only})")
+
             # Add OpenStreetMap base layer for geographical context
             # This provides users with a reference map to visualize their mining data
             osm_success, osm_message = self.layer_manager.add_osm_base_layer()
@@ -410,12 +414,13 @@ class DataImporter:
                 logger.info(f"OSM layer: {osm_message}")
             else:
                 logger.warning(f"OSM layer warning: {osm_message}")
-            
+
             # Large dataset detection - warn users about potential performance impact
-            # Threshold defined in constants.py (default: 50,000 records)
-            if record_count >= LARGE_IMPORT_WARNING_THRESHOLD:
-                # Show warning dialog
-                warning_dialog = LargeImportWarningDialog(record_count, self.dlg)
+            # Use appropriate threshold based on data type (location-only has 4x higher threshold)
+            warning_threshold = LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY if is_location_only else LARGE_IMPORT_WARNING_THRESHOLD
+            if record_count >= warning_threshold:
+                # Show warning dialog with location-only flag
+                warning_dialog = LargeImportWarningDialog(record_count, self.dlg, is_location_only)
                 result = warning_dialog.exec_()
                 
                 if result != warning_dialog.Accepted:
@@ -427,10 +432,11 @@ class DataImporter:
                 if user_choice == LargeImportWarningDialog.CANCEL:
                     return
                 elif user_choice == LargeImportWarningDialog.IMPORT_PARTIAL:
-                    # Import only first PARTIAL_IMPORT_LIMIT records
-                    data = data[:PARTIAL_IMPORT_LIMIT]
+                    # Import only first records using appropriate limit for data type
+                    partial_limit = PARTIAL_IMPORT_LIMIT_LOCATION_ONLY if is_location_only else PARTIAL_IMPORT_LIMIT
+                    data = data[:partial_limit]
                     record_count = len(data)
-                    logger.info(f"User chose partial import: {record_count} records")
+                    logger.info(f"User chose partial import: {record_count} records (limit: {partial_limit})")
                 # If IMPORT_ALL, continue with full dataset
             
             # Use chunked import for datasets > CHUNKED_IMPORT_THRESHOLD records

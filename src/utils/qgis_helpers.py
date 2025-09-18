@@ -43,7 +43,7 @@ from qgis.PyQt.QtGui import QColor
 # Configuration imports for styling and thresholds
 from ..config.constants import (
     DEFAULT_LAYER_STYLE, IMPORT_CHUNK_SIZE, OSM_LAYER_NAME,
-    OSM_LAYER_URL
+    OSM_LAYER_URL, AUTO_ZOOM_THRESHOLD
 )
 from .logging import get_logger
 
@@ -136,9 +136,11 @@ class QGISLayerManager:
             # Add to project
             QgsProject.instance().addMapLayer(layer)
             
-            # Zoom to layer if interface available
-            if self.iface:
+            # Zoom to layer if interface available and dataset is not too large
+            if self.iface and len(features) <= AUTO_ZOOM_THRESHOLD:
                 self._zoom_to_layer(layer)
+            elif len(features) > AUTO_ZOOM_THRESHOLD:
+                logger.info(f"Skipping auto-zoom for large dataset ({len(features)} > {AUTO_ZOOM_THRESHOLD} records)")
             
             logger.info(f"Created layer '{layer_name}' with {len(features)} features")
             return True, f"Successfully imported {len(features)} records"
@@ -444,9 +446,11 @@ class QGISLayerManager:
             # Add to project
             QgsProject.instance().addMapLayer(layer)
             
-            # Always zoom to layer if interface available
-            if self.iface:
+            # Zoom to layer if interface available and dataset is not too large
+            if self.iface and total_features_added <= AUTO_ZOOM_THRESHOLD:
                 self._zoom_to_layer(layer)
+            elif total_features_added > AUTO_ZOOM_THRESHOLD:
+                logger.info(f"Skipping auto-zoom for large dataset ({total_features_added} > {AUTO_ZOOM_THRESHOLD} records)")
             
             success_msg = f"Successfully imported {total_features_added:,} records in {(total_records + chunk_size - 1) // chunk_size} chunks"
             logger.info(f"Chunked import completed: {success_msg}")
