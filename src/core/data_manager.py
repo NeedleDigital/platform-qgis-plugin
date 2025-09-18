@@ -473,6 +473,8 @@ class DataManager(QObject):
         self.progress_changed.emit(-1)  # Hide progress bar when clearing data
         self.status_changed.emit("Ready to fetch data.")
         pagination_info = self._get_pagination_info(tab_name)
+        # Add flag to indicate this is a reset/clear operation, not an API response
+        pagination_info['is_reset_operation'] = True
         self.data_ready.emit(tab_name, [], [], pagination_info)
     
     def _clear_tab_data(self, tab_name: str) -> None:

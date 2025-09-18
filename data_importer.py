@@ -418,17 +418,19 @@ class DataImporter:
             # Large dataset detection - warn users about potential performance impact
             # Use appropriate threshold based on data type (location-only has 4x higher threshold)
             warning_threshold = LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY if is_location_only else LARGE_IMPORT_WARNING_THRESHOLD
+            warning_dialog_shown = False
             if record_count >= warning_threshold:
                 # Show warning dialog with location-only flag
-                warning_dialog = LargeImportWarningDialog(record_count, self.dlg, is_location_only)
+                warning_dialog = LargeImportWarningDialog(record_count, is_location_only, self.dlg)
                 result = warning_dialog.exec_()
-                
+                warning_dialog_shown = True
+
                 if result != warning_dialog.Accepted:
                     logger.info("User cancelled large import")
                     return
-                
+
                 user_choice = warning_dialog.get_user_choice()
-                
+
                 if user_choice == LargeImportWarningDialog.CANCEL:
                     return
                 elif user_choice == LargeImportWarningDialog.IMPORT_PARTIAL:
@@ -438,21 +440,21 @@ class DataImporter:
                     record_count = len(data)
                     logger.info(f"User chose partial import: {record_count} records (limit: {partial_limit})")
                 # If IMPORT_ALL, continue with full dataset
-            
+
             # Use chunked import for datasets > CHUNKED_IMPORT_THRESHOLD records
             if record_count > CHUNKED_IMPORT_THRESHOLD:
-                self._perform_chunked_import(data, layer_name, color, record_count)
+                self._perform_chunked_import(data, layer_name, color, record_count, warning_dialog_shown)
             else:
                 # Use regular import for small datasets
                 success, message = self.layer_manager.create_point_layer(layer_name, data, color)
-                self._handle_import_result(success, message)
+                self._handle_import_result(success, message, warning_dialog_shown)
             
         except Exception as e:
             error_msg = f"Data import error: {str(e)}"
             logger.error(error_msg)
             self.dlg.show_error(error_msg)
     
-    def _perform_chunked_import(self, data, layer_name, color, record_count):
+    def _perform_chunked_import(self, data, layer_name, color, record_count, warning_dialog_shown=False):
         """Perform chunked import with progress dialog."""
         # Create progress dialog
         progress_dialog = ImportProgressDialog(record_count, self.dlg)
@@ -474,8 +476,8 @@ class DataImporter:
             # Update final progress
             progress_dialog.finish_import(success, len(data) if success else 0, message)
             
-            # Show result message
-            self._handle_import_result(success, message)
+            # Show result message (suppress popup if warning dialog was shown)
+            self._handle_import_result(success, message, warning_dialog_shown)
             
         except InterruptedError:
             # User cancelled import
@@ -488,10 +490,13 @@ class DataImporter:
             progress_dialog.finish_import(False, 0, error_msg)
             self.dlg.show_error(error_msg)
     
-    def _handle_import_result(self, success, message):
+    def _handle_import_result(self, success, message, warning_dialog_shown=False):
         """Handle the result of an import operation."""
         if success:
-            self.dlg.show_info(message)
+            # Only show popup dialog if no warning dialog was shown
+            # (progress dialog already shows success message when warning dialog was used)
+            if not warning_dialog_shown:
+                self.dlg.show_info(message)
             if self.iface:
                 self.iface.messageBar().pushMessage(
                     "Success", message, level=Qgis.Success, duration=5

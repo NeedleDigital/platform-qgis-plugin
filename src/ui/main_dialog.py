@@ -180,6 +180,38 @@ class DataImporterDialog(QDialog):
             controls_layout.addRow("Company Name(s):", company_filter)
             widgets['company_filter'] = company_filter
 
+            # Max Depth filter (holes only)
+            max_depth_input = QLineEdit()
+            max_depth_input.setPlaceholderText("Enter maximum depth (meters)")
+            # Add numeric validator - only allow positive numbers including decimals
+            depth_validator = QDoubleValidator()
+            depth_validator.setBottom(0.0)  # Cannot be less than 0
+            depth_validator.setDecimals(2)  # Allow up to 2 decimal places
+            depth_validator.setNotation(QDoubleValidator.StandardNotation)
+            max_depth_input.setValidator(depth_validator)
+
+            # Add validation feedback
+            def on_depth_text_changed(text):
+                if not text:  # Empty text is valid
+                    max_depth_input.setStyleSheet("")
+                    max_depth_input.setToolTip("")
+                    return
+                try:
+                    value = float(text)
+                    if value < 0:
+                        max_depth_input.setStyleSheet("border: 1px solid red; background-color: #ffe6e6;")
+                        max_depth_input.setToolTip("Depth cannot be negative")
+                    else:
+                        max_depth_input.setStyleSheet("")
+                        max_depth_input.setToolTip("")
+                except ValueError:
+                    max_depth_input.setStyleSheet("border: 1px solid red; background-color: #ffe6e6;")
+                    max_depth_input.setToolTip("Please enter a valid numeric value")
+
+            max_depth_input.textChanged.connect(on_depth_text_changed)
+            controls_layout.addRow("Max Depth (m):", max_depth_input)
+            widgets['max_depth_input'] = max_depth_input
+
             # Record count controls
             count_input = QLineEdit("100")
             fetch_all_checkbox = QCheckBox("Fetch all records")
@@ -292,7 +324,13 @@ class DataImporterDialog(QDialog):
                 'value_input': value_input,
                 'value_container': value_container
             })
-            
+
+            # Company filter (same as in Holes section)
+            company_filter = DynamicSearchFilterWidget()
+            company_filter.search_box.setPlaceholderText("Type to search companies...")
+            controls_layout.addRow("Company Name(s):", company_filter)
+            widgets['company_filter'] = company_filter
+
             # Record count controls
             count_input = QLineEdit("100")
             fetch_all_checkbox = QCheckBox("Fetch all records")
@@ -518,6 +556,7 @@ class DataImporterDialog(QDialog):
         
         # Company search
         self.holes_tab['company_filter'].textChanged.connect(self._on_company_search_text_changed)
+        self.assays_tab['company_filter'].textChanged.connect(self._on_company_search_text_changed)
     
     def _handle_login_button(self):
         """Handle login/logout button click."""
@@ -553,19 +592,35 @@ class DataImporterDialog(QDialog):
             companies = tab_widgets['company_filter'].currentData()
             if companies:
                 params['companies'] = ",".join(companies)
+
+            # Add max_depth parameter if specified
+            max_depth_text = tab_widgets['max_depth_input'].text().strip()
+            if max_depth_text:
+                try:
+                    max_depth_value = float(max_depth_text)
+                    if max_depth_value >= 0:  # Ensure non-negative
+                        params['max_depth'] = max_depth_value
+                except ValueError:
+                    # Invalid depth value - skip parameter (UI validation should prevent this)
+                    pass
         else:  # Assays
             element = tab_widgets['element_input'].currentData()
             operator = tab_widgets['operator_input'].currentText()
             value = tab_widgets['value_input'].text().strip()
-            
+
             # Element is required for assays API
             params['element'] = element
-            
+
             # Only add operator and value if operator is not "None"
             if operator != "None":
                 params['operator'] = operator
                 if value:
                     params['value'] = value
+
+            # Add companies parameter if specified (same as Holes section)
+            companies = tab_widgets['company_filter'].currentData()
+            if companies:
+                params['companies'] = ",".join(companies)
         
         # Check if fetch_all is requested
         fetch_all = tab_widgets['fetch_all_checkbox'].isChecked()
@@ -708,8 +763,10 @@ class DataImporterDialog(QDialog):
         
         # Check if we're currently in loading state
         # If so, don't switch away from loading view unless we have data or this is a successful empty response
-        # A successful empty response is indicated by pagination_info having has_data = False
-        is_successful_empty_response = not data and pagination_info.get('has_data') == False
+        # A successful empty response is indicated by pagination_info having has_data = False AND not being a reset operation
+        is_successful_empty_response = (not data and
+                                       pagination_info.get('has_data') == False and
+                                       not pagination_info.get('is_reset_operation', False))
         if self._loading_states[tab_name] and not data and not is_successful_empty_response:
             return
         
@@ -803,13 +860,21 @@ class DataImporterDialog(QDialog):
                 prev_button.setEnabled(False)
                 next_button.setEnabled(False)
         else:
-            # Show no data message when no results are returned
+            # Handle empty data case - either reset operation or API call with 0 results
             logger.debug(f"No data to display for {tab_name}, headers: {headers}")
-            if is_location_only:
+            is_reset_operation = pagination_info.get('is_reset_operation', False)
+
+            if is_reset_operation:
+                # Reset operation - show "Waiting for data..." message
+                content_stack.setCurrentWidget(loading_label)
+                import_button.setVisible(False)
+                pagination_widget.setVisible(False)
+            elif is_location_only:
                 # Even with no data, if it's a location-only request, show the location view with 0 records
                 logger.info("Showing location-only view with 0 records")
                 self._show_location_only_data(tab_widgets, 0)
             else:
+                # API call returned 0 results - show "No data present with given filters"
                 content_stack.setCurrentWidget(no_data_label)
                 import_button.setVisible(False)
                 pagination_widget.setVisible(False)
@@ -961,6 +1026,7 @@ class DataImporterDialog(QDialog):
             
             if tab_name == "Holes":
                 tab_widgets['company_filter'].setEnabled(False)
+                tab_widgets['max_depth_input'].setEnabled(False)
                 tab_widgets['count_input'].setEnabled(False)
                 tab_widgets['fetch_all_checkbox'].setEnabled(False)
                 tab_widgets['fetch_location_only_checkbox'].setEnabled(False)
@@ -968,6 +1034,7 @@ class DataImporterDialog(QDialog):
                 tab_widgets['element_input'].setEnabled(False)
                 tab_widgets['operator_input'].setEnabled(False)
                 tab_widgets['value_input'].setEnabled(False)
+                tab_widgets['company_filter'].setEnabled(False)
                 tab_widgets['count_input'].setEnabled(False)
                 tab_widgets['fetch_all_checkbox'].setEnabled(False)
                 tab_widgets['fetch_location_only_checkbox'].setEnabled(False)
@@ -995,6 +1062,7 @@ class DataImporterDialog(QDialog):
             
             if tab_name == "Holes":
                 tab_widgets['company_filter'].setEnabled(True)
+                tab_widgets['max_depth_input'].setEnabled(True)
                 # Only enable count input if fetch all checkbox is not checked
                 fetch_all_checked = tab_widgets['fetch_all_checkbox'].isChecked()
                 tab_widgets['count_input'].setEnabled(not fetch_all_checked)
@@ -1006,6 +1074,7 @@ class DataImporterDialog(QDialog):
                 # Check if value input should be enabled based on operator
                 operator_text = tab_widgets['operator_input'].currentText()
                 tab_widgets['value_input'].setEnabled(operator_text != "None")
+                tab_widgets['company_filter'].setEnabled(True)
                 # Only enable count input if fetch all checkbox is not checked
                 fetch_all_checked = tab_widgets['fetch_all_checkbox'].isChecked()
                 tab_widgets['count_input'].setEnabled(not fetch_all_checked)
@@ -1026,7 +1095,12 @@ class DataImporterDialog(QDialog):
         # Reset company filter
         holes_tab['company_filter'].setCurrentData([])
         holes_tab['company_filter'].search_box.clear()
-        
+
+        # Reset max depth filter
+        holes_tab['max_depth_input'].clear()
+        holes_tab['max_depth_input'].setStyleSheet("")  # Clear any error styling
+        holes_tab['max_depth_input'].setToolTip("")  # Clear error tooltip
+
         # Reset record count and fetch all checkbox
         holes_tab['count_input'].setText("100")
         holes_tab['fetch_all_checkbox'].setChecked(False)
@@ -1050,7 +1124,11 @@ class DataImporterDialog(QDialog):
         assays_tab['value_input'].setPlaceholderText("Select an operator first")
         assays_tab['value_input'].setStyleSheet("")  # Clear any error styling
         assays_tab['value_input'].setToolTip("")  # Clear error tooltip
-        
+
+        # Reset company filter (same as in Holes section)
+        assays_tab['company_filter'].setCurrentData([])
+        assays_tab['company_filter'].search_box.clear()
+
         # Reset record count and fetch all checkbox
         assays_tab['count_input'].setText("100")
         assays_tab['fetch_all_checkbox'].setChecked(False)
@@ -1070,6 +1148,8 @@ class DataImporterDialog(QDialog):
     
     def handle_company_search_results(self, results: list):
         """Handle company search results from the API."""
-        # Show results in the company filter popup
+        # Show results in both company filter popups (Holes and Assays)
         if hasattr(self.holes_tab['company_filter'], 'showPopup'):
             self.holes_tab['company_filter'].showPopup(results)
+        if hasattr(self.assays_tab['company_filter'], 'showPopup'):
+            self.assays_tab['company_filter'].showPopup(results)
