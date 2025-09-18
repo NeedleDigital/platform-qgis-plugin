@@ -340,12 +340,12 @@ class DataImporterDialog(QDialog):
         loading_label.setFont(font)
         
         # No data label
-        no_data_label = QLabel("No data present with given filter.")
+        no_data_label = QLabel("No data present with given filters.")
         no_data_label.setAlignment(Qt.AlignCenter)
         no_data_font = no_data_label.font()
-        no_data_font.setPointSize(12)
+        no_data_font.setPointSize(13)
         no_data_label.setFont(no_data_font)
-        no_data_label.setStyleSheet("color: #666666; font-style: italic;")
+        no_data_label.setStyleSheet("color: #ffffff; font-style: italic;")
 
         # Location-only data widget (for coordinate data)
         location_widget = QWidget()
@@ -594,10 +594,82 @@ class DataImporterDialog(QDialog):
         self.data_fetch_requested.emit(tab_name, params, fetch_all)
     
     
+    def _generate_dynamic_layer_name(self, tab_name: str) -> str:
+        """Generate a dynamic layer name based on current filter selections."""
+        tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
+
+        # Base name
+        name_parts = [tab_name]
+
+        # Add state information
+        selected_states = tab_widgets['state_filter'].currentData()
+        valid_states = [state for state in selected_states if state and state.strip()]
+        if valid_states and len(valid_states) <= 3:  # Don't include if too many states
+            name_parts.extend(valid_states)
+        elif len(valid_states) > 3:
+            name_parts.append(f"{len(valid_states)}States")
+
+        # Tab-specific filters
+        if tab_name == "Holes":
+            # Add company information
+            companies = tab_widgets['company_filter'].currentData()
+            if companies and len(companies) <= 2:  # Limit to avoid long names
+                # Use first 10 characters of each company name
+                company_abbrevs = [company[:10] for company in companies]
+                name_parts.extend(company_abbrevs)
+            elif len(companies) > 2:
+                name_parts.append(f"{len(companies)}Cos")
+
+        else:  # Assays
+            # Add element information
+            element = tab_widgets['element_input'].currentData()
+            if element:
+                name_parts.append(element)
+
+            # Add operator and value if present
+            operator = tab_widgets['operator_input'].currentText()
+            if operator and operator != "None":
+                value = tab_widgets['value_input'].text().strip()
+                if value:
+                    name_parts.append(f"{operator}{value}ppm")
+                else:
+                    name_parts.append(operator)
+
+        # Add record count information
+        fetch_all = tab_widgets['fetch_all_checkbox'].isChecked()
+        fetch_location_only_checkbox = tab_widgets.get('fetch_location_only_checkbox')
+        fetch_location_only = fetch_location_only_checkbox.isChecked() if fetch_location_only_checkbox else False
+
+        if fetch_location_only:
+            name_parts.append("LocationOnly")
+            # Also add record count for location only if not fetch all
+            if not fetch_all:
+                try:
+                    requested_count = int(tab_widgets['count_input'].text() or "100")
+                    name_parts.append(f"{requested_count}rec")
+                except ValueError:
+                    name_parts.append("100rec")
+        elif not fetch_all:
+            try:
+                requested_count = int(tab_widgets['count_input'].text() or "100")
+                name_parts.append(f"{requested_count}rec")
+            except ValueError:
+                name_parts.append("100rec")
+        # For fetch_all, don't add anything as per requirements
+
+        # Join parts with underscores and limit total length
+        layer_name = "_".join(name_parts)
+
+        # Limit total length to avoid overly long names
+        if len(layer_name) > 50:
+            layer_name = layer_name[:47] + "..."
+
+        return layer_name
+
     def _handle_import_request(self, tab_name: str):
         """Handle data import request."""
-        # Show layer options dialog
-        default_name = f"Mining {tab_name} Data"
+        # Show layer options dialog with dynamic default name
+        default_name = self._generate_dynamic_layer_name(tab_name)
         options_dialog = LayerOptionsDialog(default_name, self)
         
         if options_dialog.exec_() == QDialog.Accepted:
@@ -635,8 +707,10 @@ class DataImporterDialog(QDialog):
         tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
         
         # Check if we're currently in loading state
-        # If so, don't switch away from loading view unless we have data
-        if self._loading_states[tab_name] and not data:
+        # If so, don't switch away from loading view unless we have data or this is a successful empty response
+        # A successful empty response is indicated by pagination_info having has_data = False
+        is_successful_empty_response = not data and pagination_info.get('has_data') == False
+        if self._loading_states[tab_name] and not data and not is_successful_empty_response:
             return
         
         table = tab_widgets['table']
@@ -856,10 +930,15 @@ class DataImporterDialog(QDialog):
         # Restore original waiting message
         loading_label.setText("Waiting for data...")
         
-        # Only show waiting message if there's no data in the table
+        # Only show waiting message if there's no data in the table AND no data has been fetched yet
+        # If show_data has been called with empty results, it will have set the appropriate view
         table = tab_widgets['table']
         if table.rowCount() == 0:
-            content_stack.setCurrentWidget(loading_label)
+            # Check if we're currently showing the no_data_label, if so don't override it
+            current_widget = content_stack.currentWidget()
+            no_data_label = tab_widgets['no_data_label']
+            if current_widget != no_data_label:
+                content_stack.setCurrentWidget(loading_label)
         
         # Re-enable all UI controls after loading
         self._enable_all_controls()

@@ -192,8 +192,6 @@ AUTO_ZOOM_THRESHOLD = 50000                  # Disable auto-zoom above this coun
 API_FETCH_LIMIT = 50000                      # Maximum records per API request
 NEEDLE_BASE_API_URL = "https://master.api.drh.needle-digital.com"
 
-# UI Settings
-DEFAULT_RECORD_COUNT = 100                   # Default records to display
 ```
 
 ### Layer Styling (`src/config/constants.py`)
