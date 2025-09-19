@@ -1224,9 +1224,9 @@ class DataImporterDialog(QDialog):
                 border_color = "#666666"    # Gray border
             else:
                 # Light theme colors - soft pastels
-                primary_bg = "#8DB5A2"      # Light sage green
+                primary_bg = "#2C2C2C"      # Light sage green
                 primary_text = "#FFFFFF"    # White text
-                secondary_bg = "#9BB2D1"    # Soft periwinkle blue
+                secondary_bg = "#6B8CAE"    # Soft periwinkle blue
                 secondary_text = "#FFFFFF"  # White text
                 danger_bg = "#D4A5A5"       # Soft dusty rose
                 danger_text = "#FFFFFF"     # White text
