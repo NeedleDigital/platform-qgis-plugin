@@ -88,16 +88,17 @@ class QGISLayerManager:
         """
         self.iface = iface
     
-    def create_point_layer(self, layer_name: str, data: List[Dict[str, Any]], 
-                          color: Optional[QColor] = None) -> Tuple[bool, str]:
+    def create_point_layer(self, layer_name: str, data: List[Dict[str, Any]],
+                          color: Optional[QColor] = None, is_location_only: bool = False) -> Tuple[bool, str]:
         """
         Create a point layer from data.
-        
+
         Args:
             layer_name: Name for the new layer
             data: List of dictionaries containing point data
             color: Point color (optional)
-            
+            is_location_only: Whether this is location-only data (affects hover tooltips)
+
         Returns:
             Tuple of (success, message)
         """
@@ -129,9 +130,9 @@ class QGISLayerManager:
             
             provider.addFeatures(features)
             layer.updateExtents()
-            
+
             # Apply styling
-            self._apply_layer_styling(layer, color)
+            self._apply_layer_styling(layer, color, is_location_only)
             
             # Add to project
             QgsProject.instance().addMapLayer(layer)
@@ -229,27 +230,91 @@ class QGISLayerManager:
         
         return lat, lon
     
-    def _apply_layer_styling(self, layer: QgsVectorLayer, color: Optional[QColor] = None):
+    def _apply_layer_styling(self, layer: QgsVectorLayer, color: Optional[QColor] = None, is_location_only: bool = False):
         """Apply styling to the layer."""
         try:
             # Use provided color or default
             point_color = color or QColor(DEFAULT_LAYER_STYLE['point_color'])
-            
+
             # Create symbol
             symbol = QgsSymbol.defaultSymbol(layer.geometryType())
             symbol.setColor(point_color)
             symbol.setSize(DEFAULT_LAYER_STYLE['point_size'])
             symbol.setOpacity(DEFAULT_LAYER_STYLE['point_transparency'])
-            
+
             # Apply renderer
             renderer = QgsSingleSymbolRenderer(symbol)
             layer.setRenderer(renderer)
-            
+
+            # Setup hover tooltips (map tips) for non-location-only data
+            if not is_location_only:
+                self._setup_hover_tooltips(layer)
+
             # Refresh layer
             layer.triggerRepaint()
-            
+
         except Exception as e:
             logger.warning(f"Failed to apply layer styling: {e}")
+
+    def _setup_hover_tooltips(self, layer: QgsVectorLayer):
+        """Setup hover tooltips (map tips) for the layer showing company name and hole ID."""
+        try:
+            # Get field names from the layer
+            field_names = [field.name() for field in layer.fields()]
+            logger.info(f"Available fields for hover tooltips: {field_names}")
+
+            # Find company name field - try common variations
+            company_field = None
+            for field_name in ['company_name', 'company', 'name']:
+                if field_name in field_names:
+                    company_field = field_name
+                    break
+
+            # Find hole ID field - try common variations
+            hole_id_field = None
+            for field_name in ['hole_id', 'holeid', 'hole_name', 'id']:
+                if field_name in field_names:
+                    hole_id_field = field_name
+                    break
+
+            # Only setup tooltips if we have at least one of the required fields
+            if not company_field and not hole_id_field:
+                logger.info("No company name or hole ID fields found - skipping hover tooltips")
+                return
+
+            # Build HTML template for hover tooltip
+            tooltip_parts = []
+
+            if company_field:
+                tooltip_parts.append(f'<b>Company:</b> [% "{company_field}" %]')
+                logger.info(f"Using field '{company_field}' for company name in tooltips")
+
+            if hole_id_field:
+                tooltip_parts.append(f'<b>Hole ID:</b> [% "{hole_id_field}" %]')
+                logger.info(f"Using field '{hole_id_field}' for hole ID in tooltips")
+
+            # Create HTML template with good readability (light background, dark text)
+            tooltip_html = f"""
+            <div style="background-color: #ffffff;
+                        border: 2px solid #333333;
+                        border-radius: 8px;
+                        padding: 8px 12px;
+                        font-family: Arial, sans-serif;
+                        font-size: 12px;
+                        color: #333333;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+                        max-width: 250px;">
+                {' | '.join(tooltip_parts)}
+            </div>
+            """
+
+            # Set the map tip template
+            layer.setMapTipTemplate(tooltip_html)
+
+            logger.info(f"Hover tooltips configured for layer '{layer.name()}' with fields: {[company_field, hole_id_field]}")
+
+        except Exception as e:
+            logger.warning(f"Failed to setup hover tooltips: {e}")
 
     def _zoom_to_layer(self, layer: QgsVectorLayer):
         """Zoom to the full extent of the layer with proper CRS transformation."""
@@ -355,18 +420,20 @@ class QGISLayerManager:
             logger.error(error_msg)
             return False, error_msg
     
-    def create_point_layer_chunked(self, layer_name: str, data: List[Dict[str, Any]], 
-                                  color: Optional[QColor] = None, 
-                                  progress_callback: Optional[callable] = None) -> Tuple[bool, str]:
+    def create_point_layer_chunked(self, layer_name: str, data: List[Dict[str, Any]],
+                                  color: Optional[QColor] = None,
+                                  progress_callback: Optional[callable] = None,
+                                  is_location_only: bool = False) -> Tuple[bool, str]:
         """
         Create a point layer from large dataset using chunked processing.
-        
+
         Args:
             layer_name: Name for the new layer
             data: List of dictionaries containing point data
             color: Point color (optional)
             progress_callback: Function to call with progress updates (processed_count, chunk_info)
-            
+            is_location_only: Whether this is location-only data (affects hover tooltips)
+
         Returns:
             Tuple of (success, message)
         """
@@ -439,9 +506,9 @@ class QGISLayerManager:
             
             # Finalize layer
             layer.updateExtents()
-            
+
             # Apply styling
-            self._apply_layer_styling(layer, color)
+            self._apply_layer_styling(layer, color, is_location_only)
             
             # Add to project
             QgsProject.instance().addMapLayer(layer)

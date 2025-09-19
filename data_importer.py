@@ -447,10 +447,10 @@ class DataImporter:
 
             # Use chunked import for datasets > CHUNKED_IMPORT_THRESHOLD records
             if record_count > CHUNKED_IMPORT_THRESHOLD:
-                self._perform_chunked_import(data, layer_name, color, record_count, warning_dialog_shown)
+                self._perform_chunked_import(data, layer_name, color, record_count, warning_dialog_shown, is_location_only)
             else:
                 # Use regular import for small datasets
-                success, message = self.layer_manager.create_point_layer(layer_name, data, color)
+                success, message = self.layer_manager.create_point_layer(layer_name, data, color, is_location_only)
                 self._handle_import_result(success, message, warning_dialog_shown)
             
         except Exception as e:
@@ -458,7 +458,7 @@ class DataImporter:
             logger.error(error_msg)
             self.dlg.show_error(error_msg)
     
-    def _perform_chunked_import(self, data, layer_name, color, record_count, warning_dialog_shown=False):
+    def _perform_chunked_import(self, data, layer_name, color, record_count, warning_dialog_shown=False, is_location_only=False):
         """Perform chunked import with progress dialog."""
         # Create progress dialog
         progress_dialog = ImportProgressDialog(record_count, self.dlg)
@@ -474,7 +474,7 @@ class DataImporter:
         try:
             # Perform chunked import
             success, message = self.layer_manager.create_point_layer_chunked(
-                layer_name, data, color, progress_callback
+                layer_name, data, color, progress_callback, is_location_only
             )
             
             # Update final progress
