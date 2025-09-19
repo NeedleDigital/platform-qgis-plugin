@@ -13,11 +13,15 @@ The ND Data Importer provides seamless access to Australia's comprehensive minin
 ### Key Features
 
 - 🔍 **State-wise Data Filtering**: Filter data by Australian states and territories
-- 🏢 **Company-specific Data**: Search and filter by mining companies
+- 🏢 **Company-specific Data**: Search and filter by mining companies with auto-complete
 - 🧪 **Chemical Element Analysis**: Filter assay data by specific elements (Au, Cu, Fe, etc.)
+- 🎯 **Advanced Hole Type Filtering**: Filter by drilling method (RAB, RC, Diamond, AC)
+- 📏 **Depth-based Filtering**: Set maximum depth limits for drill hole data
 - 📊 **Large Dataset Support**: Optimized handling of datasets up to 1M+ records
 - 🗺️ **Auto Base Layer**: Automatic OpenStreetMap integration for spatial context
 - ⚡ **Performance Optimized**: Chunked processing with progress tracking
+- 💡 **Smart Hover Tooltips**: Hover over points to see company name and hole ID
+- 🏠 **Adaptive Window Layout**: Full-height, 75% width window automatically centered to QGIS
 - 🎯 **User-friendly Interface**: Intuitive tabbed interface with real-time feedback
 
 ## 📁 Project Structure
@@ -131,20 +135,25 @@ The plugin features a tabbed interface with two main sections:
 - **Purpose**: Import drill hole collar and survey data
 - **Data Includes**: Hole ID, coordinates, depth, company, project details
 - **Filters Available**:
-  - State/Territory selection
-  - Company name search
-  - Date ranges
-  - Depth parameters
+  - State/Territory selection (NSW, QLD, SA, TAS, VIC, WA, NT)
+  - Company name search with auto-complete (3+ character minimum)
+  - Hole type filtering (RAB, RC, Diamond, AC)
+  - Maximum depth filtering (numeric input ≥0)
+  - Record count control (specific number or "fetch all")
+  - Location-only mode for performance optimization
 
 #### 🧪 Assays Tab - Chemical Analysis Data
 
 - **Purpose**: Import geochemical assay results
-- **Data Includes**: Sample data with chemical element concentrations
+- **Data Includes**: Sample data with chemical element concentrations in ppm
 - **Filters Available**:
-  - Chemical element selection (Au, Cu, Fe, Zn, etc.)
-  - Concentration thresholds (>, <, =, !=, >=, <=)
-  - State/Territory selection
-  - Company filtering
+  - Chemical element selection (112 elements: Au, Cu, Fe, Zn, etc.)
+  - Concentration thresholds with operators (>, <, =, !=, >=, <=)
+  - State/Territory selection (NSW, QLD, SA, TAS, VIC, WA, NT)
+  - Company name search with auto-complete (3+ character minimum)
+  - Hole type filtering (RAB, RC, Diamond, AC)
+  - Record count control (specific number or "fetch all")
+  - Location-only mode for performance optimization
 
 ### Data Import Workflow
 
@@ -168,10 +177,25 @@ The plugin automatically optimizes performance for large datasets:
 
 Upon successful import:
 
-- **Point Layers**: Drill holes and assay locations plotted as points
+- **Point Layers**: Drill holes and assay locations plotted as red points (size 2.0, 80% opacity)
 - **Base Map**: OpenStreetMap automatically added for geographical context
-- **Layer Styling**: Default styling applied with customization options
+- **Smart Hover Tooltips**: Hover over points to see company name and hole ID (non-location-only data)
+- **Adaptive Window**: Plugin window automatically sized to 75% width, full height, centered to QGIS
+- **Layer Management**: Automatic coordinate system handling (WGS84/EPSG:4326)
+- **Performance Optimization**: Auto-zoom disabled for datasets >50,000 records
 - **Attribute Data**: Full dataset accessible via attribute tables
+
+### Enhanced User Interface
+
+The plugin now features several UI/UX improvements:
+
+- **Adaptive Layout**: Main window automatically resizes to 75% of QGIS width and full height
+- **Centered Positioning**: Plugin window automatically centers relative to QGIS main window
+- **Advanced Filtering**: Multi-select dropdowns with chip display for selected items
+- **Dynamic Company Search**: Real-time company name suggestions with 3+ character minimum
+- **Hole Type Integration**: API-driven hole type options with fallback to defaults
+- **Improved Alignment**: Proper widget alignment preventing layout shifts when chips appear
+- **Visual Feedback**: Clear status messages and error handling throughout the interface
 
 ## ⚙️ Configuration
 
@@ -412,20 +436,30 @@ We welcome contributions from the community!
 
 ## 🔄 Version History
 
-### v1.0.0 (Current)
+### v1.0.0 (Current) - Enhanced Edition
 
-- ✅ Complete drill hole and assay data import
-- ✅ State-wise and company-based filtering
-- ✅ Chemical element filtering for assays
-- ✅ Large dataset optimization (1M+ records)
-- ✅ Automatic OpenStreetMap base layer
-- ✅ Comprehensive error handling and user feedback
+**Core Features:**
+- ✅ Complete drill hole and assay data import functionality
+- ✅ State-wise and company-based filtering with auto-complete
+- ✅ Chemical element filtering for assays (112 elements supported)
+- ✅ Large dataset optimization (1M+ records with chunked processing)
+- ✅ Automatic OpenStreetMap base layer integration
+
+**New Enhanced Features:**
+- ✅ **Advanced Filtering**: Hole type filtering (RAB, RC, Diamond, AC) with API integration
+- ✅ **Depth Filtering**: Maximum depth filtering for drill hole data
+- ✅ **Smart Tooltips**: Hover tooltips showing company name and hole ID
+- ✅ **Adaptive UI**: Auto-sizing window (75% width, full height) centered to QGIS
+- ✅ **Improved UX**: Enhanced layout alignment and visual feedback
+- ✅ **Performance Optimization**: Location-only mode for large datasets
+- ✅ **Robust Error Handling**: Comprehensive error handling and user feedback
 
 ### Planned Features
 
-- 🔄 **v1.1.0**: Advanced filtering options and data export
-- 🔄 **v1.2.0**: 3D visualization and drill hole profiles
-- 🔄 **v1.3.0**: Statistical analysis tools and reporting
+- 🔄 **v1.1.0**: Advanced visualization modes (heatmaps, graduated symbols, categorized rendering)
+- 🔄 **v1.2.0**: Statistical analysis tools and multi-element analysis
+- 🔄 **v1.3.0**: 3D visualization and drill hole profiles
+- 🔄 **v1.4.0**: Data export capabilities and reporting tools
 
 ---
 

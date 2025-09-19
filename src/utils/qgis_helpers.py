@@ -256,6 +256,7 @@ class QGISLayerManager:
         except Exception as e:
             logger.warning(f"Failed to apply layer styling: {e}")
 
+
     def _setup_hover_tooltips(self, layer: QgsVectorLayer):
         """Setup hover tooltips (map tips) for the layer showing company name and hole ID."""
         try:
