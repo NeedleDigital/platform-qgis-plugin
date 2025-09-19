@@ -33,14 +33,13 @@ from .src.ui.components import (  # Reusable UI components and dialogs
     LoginDialog, LayerOptionsDialog, LargeImportWarningDialog, ImportProgressDialog
 )
 from .src.utils.qgis_helpers import QGISLayerManager  # QGIS integration utilities
-from .src.utils.logging import get_logger  # Centralized logging system
+from .src.utils.logging import log_error, log_warning  # Centralized logging system
 from .src.config.constants import (  # Configuration constants and thresholds
     PLUGIN_NAME, PLUGIN_VERSION, LARGE_IMPORT_WARNING_THRESHOLD,
     LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY, PARTIAL_IMPORT_LIMIT,
     PARTIAL_IMPORT_LIMIT_LOCATION_ONLY, CHUNKED_IMPORT_THRESHOLD
 )
 
-logger = get_logger(__name__)
 
 class DataImporter:
     """Main plugin class for ND Data Importer.
@@ -104,7 +103,6 @@ class DataImporter:
         self.dlg = None
         self.login_dlg = None
         
-        logger.info(f"Plugin initialized: {PLUGIN_NAME} v{PLUGIN_VERSION}")
 
     def tr(self, message):
         """Get the translation for a string using Qt translation API."""
@@ -161,7 +159,6 @@ class DataImporter:
         if self.login_dlg:
             self.login_dlg.close()
         
-        logger.info("Plugin unloaded")
 
     def run(self):
         """Run method that loads and shows the plugin dialog."""
@@ -179,11 +176,10 @@ class DataImporter:
             is_authenticated = self.data_manager.is_authenticated()
             self.dlg.update_login_status(is_authenticated)
             
-            logger.info("Plugin dialog opened")
             
         except Exception as e:
             error_msg = f"Failed to open plugin: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             if self.iface:
                 self.iface.messageBar().pushMessage(
                     "Error", error_msg, level=Qgis.Critical, duration=5
@@ -202,7 +198,6 @@ class DataImporter:
             self.dlg = DataImporterDialog()
             self._connect_dialog_signals()
             
-            logger.info("Plugin components initialized")
 
     def _connect_dialog_signals(self):
         """Connect dialog signals to handlers."""
@@ -252,13 +247,13 @@ class DataImporter:
             
             # Show login dialog
             if self.login_dlg.exec_() == LoginDialog.Accepted:
-                logger.info("Login dialog accepted")
+                pass
             else:
-                logger.info("Login dialog cancelled")
+                pass
                 
         except Exception as e:
             error_msg = f"Login dialog error: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             self.dlg.show_error(error_msg)
 
     def _handle_logout_request(self):
@@ -277,11 +272,10 @@ class DataImporter:
                     level=Qgis.Info, duration=3
                 )
             
-            logger.info("User logged out")
             
         except Exception as e:
             error_msg = f"Logout error: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             self.dlg.show_error(error_msg)
 
     def _handle_login_attempt(self, email, password):
@@ -299,7 +293,7 @@ class DataImporter:
             
         except Exception as e:
             error_msg = f"Login attempt error: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             if self.login_dlg:
                 self.login_dlg.on_login_result(False, error_msg)
 
@@ -322,10 +316,9 @@ class DataImporter:
             # Fetch hole types after successful login
             self.data_manager.fetch_hole_types()
 
-            logger.info("Login successful")
             
         except Exception as e:
-            logger.error(f"Login success handler error: {str(e)}")
+            log_error(f"Login success handler error: {str(e)}")
 
     def _handle_login_failed(self, error_message):
         """Handle failed login."""
@@ -336,10 +329,10 @@ class DataImporter:
             if self.login_dlg:
                 self.login_dlg.on_login_result(False, f"Login Failed: {error_message}")
             
-            logger.warning(f"Login failed: {error_message}")
+            log_warning(f"Login failed: {error_message}")
             
         except Exception as e:
-            logger.error(f"Login failure handler error: {str(e)}")
+            log_error(f"Login failure handler error: {str(e)}")
 
     def _update_ui_on_auth_change(self):
         """Update UI when authentication status changes (including silent login)."""
@@ -347,20 +340,18 @@ class DataImporter:
             if self.dlg:
                 is_authenticated = self.data_manager.is_authenticated()
                 self.dlg.update_login_status(is_authenticated)
-                logger.info(f"UI updated - Authentication status: {is_authenticated}")
         except Exception as e:
-            logger.error(f"UI update error: {str(e)}")
+            log_error(f"UI update error: {str(e)}")
 
     def _handle_data_fetch_request(self, tab_name, params, fetch_all):
         """Handle data fetch request."""
         try:
-            logger.info(f"Data fetch requested for {tab_name}: {params}, fetch_all={fetch_all}")
             self.dlg.show_cancel_button()  # Show cancel button when starting fetch
             self.data_manager.fetch_data(tab_name, params, fetch_all)
             
         except Exception as e:
             error_msg = f"Data fetch error: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             self.dlg.hide_cancel_button()  # Hide cancel button on error
             self.dlg.hide_loading(tab_name)  # Hide loading state on error
             self.dlg.show_error(error_msg)
@@ -368,12 +359,11 @@ class DataImporter:
     def _handle_data_clear_request(self, tab_name):
         """Handle data clear request."""
         try:
-            logger.info(f"Data clear requested for {tab_name}")
             self.data_manager.clear_tab_data(tab_name)
             
         except Exception as e:
             error_msg = f"Data clear error: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             self.dlg.show_error(error_msg)
 
     def _handle_data_import_request(self, tab_name, layer_name, color):
@@ -409,15 +399,14 @@ class DataImporter:
                 return
 
             record_count = len(data)
-            logger.info(f"Import requested: {record_count} records to layer '{layer_name}' (location_only: {is_location_only})")
 
             # Add OpenStreetMap base layer for geographical context
             # This provides users with a reference map to visualize their mining data
             osm_success, osm_message = self.layer_manager.add_osm_base_layer()
             if osm_success:
-                logger.info(f"OSM layer: {osm_message}")
+                pass
             else:
-                logger.warning(f"OSM layer warning: {osm_message}")
+                pass
 
             # Large dataset detection - warn users about potential performance impact
             # Use appropriate threshold based on data type (location-only has 4x higher threshold)
@@ -430,7 +419,6 @@ class DataImporter:
                 warning_dialog_shown = True
 
                 if result != warning_dialog.Accepted:
-                    logger.info("User cancelled large import")
                     return
 
                 user_choice = warning_dialog.get_user_choice()
@@ -442,7 +430,6 @@ class DataImporter:
                     partial_limit = PARTIAL_IMPORT_LIMIT_LOCATION_ONLY if is_location_only else PARTIAL_IMPORT_LIMIT
                     data = data[:partial_limit]
                     record_count = len(data)
-                    logger.info(f"User chose partial import: {record_count} records (limit: {partial_limit})")
                 # If IMPORT_ALL, continue with full dataset
 
             # Use chunked import for datasets > CHUNKED_IMPORT_THRESHOLD records
@@ -455,7 +442,7 @@ class DataImporter:
             
         except Exception as e:
             error_msg = f"Data import error: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             self.dlg.show_error(error_msg)
     
     def _perform_chunked_import(self, data, layer_name, color, record_count, warning_dialog_shown=False, is_location_only=False):
@@ -467,7 +454,6 @@ class DataImporter:
         # Define progress callback
         def progress_callback(processed_count, chunk_info):
             if progress_dialog.wasCanceled():
-                logger.info("User cancelled import during processing")
                 raise InterruptedError("Import cancelled by user")
             progress_dialog.update_progress(processed_count, chunk_info)
         
@@ -511,13 +497,12 @@ class DataImporter:
     def _handle_cancel_request(self):
         """Handle cancel request."""
         try:
-            logger.info("Cancel request received")
             self.data_manager.cancel_request()
             self.dlg.hide_cancel_button()
             
         except Exception as e:
             error_msg = f"Cancel request error: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             self.dlg.show_error(error_msg)
 
     def _handle_page_next(self, tab_name: str):
@@ -526,7 +511,7 @@ class DataImporter:
             self.data_manager.next_page(tab_name)
         except Exception as e:
             error_msg = f"Page navigation error: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             self.dlg.show_error(error_msg)
 
     def _handle_page_previous(self, tab_name: str):
@@ -535,15 +520,14 @@ class DataImporter:
             self.data_manager.previous_page(tab_name)
         except Exception as e:
             error_msg = f"Page navigation error: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             self.dlg.show_error(error_msg)
     
     def _handle_company_search_request(self, query: str):
         """Handle company search request."""
         try:
-            logger.info(f"Company search requested: '{query}'")
             self.data_manager.search_companies(query)
         except Exception as e:
             error_msg = f"Company search error: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             # Don't show error to user for search failures, just log them

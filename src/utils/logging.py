@@ -4,7 +4,6 @@ Uses New Relic cloud logging API with crash-safe initialization.
 """
 
 import json
-import logging
 import ssl
 import sys
 import threading
@@ -139,14 +138,10 @@ def enable_safe_logging():
     global _logging_enabled
     _logging_enabled = True
 
-
 def disable_logging():
     """Disable New Relic logging."""
     global _logging_enabled
     _logging_enabled = False
-
-
-
 
 def get_newrelic_logger():
     """Get the global New Relic logger instance."""
@@ -159,48 +154,28 @@ def get_newrelic_logger():
     return _newrelic_logger
 
 
-def get_logger(name: str, level: Optional[str] = None) -> logging.Logger:
-    """
-    Get a basic Python logger (no New Relic integration for standard logger to avoid crashes).
-    """
-    logger = logging.getLogger(name)
-    if not logger.handlers:
-        # Use simple console handler to avoid Qt crashes
-        handler = logging.StreamHandler(sys.stdout)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-        log_level = getattr(logging, (level or 'INFO').upper(), logging.INFO)
-        logger.setLevel(log_level)
-    return logger
-
-
-# Simple helper functions that don't crash
-def log_api_request(endpoint: str, params: dict, logger: logging.Logger = None) -> None:
-    """Log API request details - console only to prevent crashes."""
+# Simple helper functions for API logging
+def log_api_request(endpoint: str, params: dict) -> None:
+    """Log API request details to New Relic."""
     message = f"API Request - Endpoint: {endpoint}, Params: {params}"
     try:
-        if logger:
-            logger.info(message)
+        nr_logger = get_newrelic_logger()
+        if nr_logger:
+            nr_logger.send_log(message, "info")
         else:
-            # Use stderr for debugging output to avoid cluttering stdout
+            # Fallback to stderr for debugging if New Relic not available
             sys.stderr.write(f"DEBUG: {message}\n")
     except Exception:
         pass  # Silently fail to prevent crashes
 
 
-def log_api_response(endpoint: str, success: bool, data_count: int, logger: logging.Logger = None) -> None:
+def log_api_response(endpoint: str, success: bool, data_count: int) -> None:
     """Log API response details to New Relic."""
     status = "SUCCESS" if success else "FAILED"
     message = f"API Response - Endpoint: {endpoint}, Status: {status}, Records: {data_count}"
     logtype = "info" if success else "error"
 
     try:
-        if logger:
-            if success:
-                logger.info(message)
-            else:
-                logger.error(message)
         nr_logger = get_newrelic_logger()
         if nr_logger:
             nr_logger.send_log(message, logtype)
@@ -208,3 +183,39 @@ def log_api_response(endpoint: str, success: bool, data_count: int, logger: logg
         pass  # Silently fail to prevent crashes
 
 
+# New Relic-only logging functions
+def log_info(message: str) -> None:
+    """Log info message to New Relic."""
+    try:
+        nr_logger = get_newrelic_logger()
+        if nr_logger:
+            nr_logger.send_log(message, "info")
+    except Exception:
+        pass
+
+def log_error(message: str) -> None:
+    """Log error message to New Relic."""
+    try:
+        nr_logger = get_newrelic_logger()
+        if nr_logger:
+            nr_logger.send_log(message, "error")
+    except Exception:
+        pass
+
+def log_warning(message: str) -> None:
+    """Log warning message to New Relic."""
+    try:
+        nr_logger = get_newrelic_logger()
+        if nr_logger:
+            nr_logger.send_log(message, "warning")
+    except Exception:
+        pass
+
+def log_debug(message: str) -> None:
+    """Log debug message to New Relic."""
+    try:
+        nr_logger = get_newrelic_logger()
+        if nr_logger:
+            nr_logger.send_log(message, "debug")
+    except Exception:
+        pass

@@ -11,7 +11,7 @@ from qgis.PyQt.QtWidgets import (
 from qgis.PyQt.QtGui import QFont, QColor, QStandardItemModel, QStandardItem
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize
 
-from ..utils.logging import get_logger
+from ..utils.logging import log_info, log_error, log_warning, log_debug
 from ..config.constants import (
     MAX_SAFE_IMPORT, PARTIAL_IMPORT_LIMIT,
     MAX_SAFE_IMPORT_LOCATION_ONLY, PARTIAL_IMPORT_LIMIT_LOCATION_ONLY

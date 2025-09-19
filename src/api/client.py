@@ -48,9 +48,8 @@ from qgis.core import QgsSettings
 
 # Internal configuration and utilities
 from ..config.settings import config  # API configuration and settings
-from ..utils.logging import get_logger  # Centralized logging system
+from ..utils.logging import log_error, log_warning  # Centralized logging system
 
-logger = get_logger(__name__)
 
 class ApiClient(QObject):
     """HTTP API Client for Needle Digital Mining Data Services.
@@ -122,7 +121,6 @@ class ApiClient(QObject):
             self.login_failed.emit("A valid email and password are required.")
             return
         
-        logger.info(f"Attempting login for user: {email}")
         
         payload = {
             "email": email,
@@ -140,7 +138,6 @@ class ApiClient(QObject):
     
     def logout(self) -> None:
         """Logout user and clear stored tokens."""
-        logger.info("User logged out")
         self.auth_token = None
         self.refresh_token = None
         self.token_expires_at = 0
@@ -158,17 +155,15 @@ class ApiClient(QObject):
         for reply in self._active_replies:
             if reply and not reply.isFinished():
                 reply.abort()
-                logger.info("Cancelled active network request")
         self._active_replies.clear()
     
     def refresh_auth_token(self, silent: bool = False) -> None:
         """Refresh the authentication token using refresh token."""
         if not self.refresh_token:
             if not silent:
-                logger.warning("Token refresh aborted: No refresh token available.")
+                log_warning("Token refresh aborted: No refresh token available.")
             return
         
-        logger.info("Refreshing authentication token")
         
         payload = {
             "grant_type": "refresh_token",
@@ -180,7 +175,7 @@ class ApiClient(QObject):
             method="POST",
             data=payload,
             callback=self._handle_refresh_response,
-            error_callback=lambda error: logger.error(f"Token refresh failed: {error}")
+            error_callback=lambda error: log_error(f"Token refresh failed: {error}")
         )
     
     def make_api_request(self, endpoint: str, params: Dict[str, Any], callback: Optional[Callable] = None) -> None:
@@ -260,7 +255,7 @@ class ApiClient(QObject):
                 except:
                     pass
                 
-                logger.error(f"Network error: {error_msg}")
+                log_error(f"Network error: {error_msg}")
                 if error_callback:
                     error_callback(error_msg)
             else:
@@ -269,12 +264,12 @@ class ApiClient(QObject):
                     callback(response_data)
         except json.JSONDecodeError as e:
             error_msg = f"Invalid JSON response: {e}"
-            logger.error(error_msg)
+            log_error(error_msg)
             if error_callback:
                 error_callback(error_msg)
         except Exception as e:
             error_msg = f"Unexpected error: {e}"
-            logger.error(error_msg)
+            log_error(error_msg)
             if error_callback:
                 error_callback(error_msg)
         finally:
@@ -302,12 +297,11 @@ class ApiClient(QObject):
             refresh_delay_ms = max(0, (expires_in - 60) * 1000)  # Refresh 1 minute before expiry
             self.token_refresh_timer.start(refresh_delay_ms)
             
-            logger.info("Login successful")
             self.login_success.emit()
             
         except Exception as e:
             error_msg = f"Login processing error: {e}"
-            logger.error(error_msg)
+            log_error(error_msg)
             self.login_failed.emit(error_msg)
     
     def _handle_refresh_response(self, response_data: Dict[str, Any]) -> None:
@@ -330,24 +324,22 @@ class ApiClient(QObject):
                 refresh_delay_ms = max(0, (expires_in - 60) * 1000)
                 self.token_refresh_timer.start(refresh_delay_ms)
                 
-                logger.info("Token refreshed successfully")
                 
                 # Emit login_success signal to update UI
                 self.login_success.emit()
             else:
-                logger.error("Token refresh failed: No token in response")
+                log_error("Token refresh failed: No token in response")
                 # Emit login_failed signal to update UI
                 self.login_failed.emit("Token refresh failed")
                 
         except Exception as e:
-            logger.error(f"Token refresh processing error: {e}")
+            log_error(f"Token refresh processing error: {e}")
             # Emit login_failed signal to update UI
             self.login_failed.emit(f"Token refresh error: {e}")
     
     def _handle_api_response(self, endpoint: str, response_data, 
                            callback: Optional[Callable] = None) -> None:
         """Handle API response from Needle Digital service."""
-        logger.info(f"API response received for endpoint: {endpoint}")
         
         if callback:
             callback(response_data)
@@ -356,5 +348,3 @@ class ApiClient(QObject):
         # Some endpoints (like companies search) return lists directly
         if isinstance(response_data, dict):
             self.api_response_received.emit(endpoint, response_data)
-        else:
-            logger.info(f"Skipping signal emission for endpoint {endpoint} - response is not a dict")

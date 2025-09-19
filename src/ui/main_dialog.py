@@ -49,9 +49,8 @@ from ..config.constants import (
     LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY, MAX_SAFE_IMPORT_LOCATION_ONLY,
     PARTIAL_IMPORT_LIMIT_LOCATION_ONLY, DEFAULT_HOLE_TYPES
 )
-from ..utils.logging import get_logger
+from ..utils.logging import log_warning
 
-logger = get_logger(__name__)
 
 class DataImporterDialog(QDialog):
     """Main plugin dialog."""
@@ -816,18 +815,12 @@ class DataImporterDialog(QDialog):
         page_label = tab_widgets['page_label']
         
         # Debug logging for troubleshooting
-        logger.debug(f"show_data called for {tab_name}: data_count={len(data) if data else 0}, headers={headers}")
 
         # Check if this is location-only data (based on headers)
         is_location_only = (
             len(headers) == 3 and
             set(headers) == {'latitude', 'longitude', 'location_string'}
         )
-
-        # Simple debug logging
-        logger.info(f"show_data called for {tab_name}: data_count={len(data) if data else 0}, headers={headers}, is_location_only={is_location_only}")
-        if data and len(data) > 0:
-            logger.info(f"Sample data record: {data[0]}")
 
         if data:
             # Check if we should display location-only view
@@ -898,7 +891,6 @@ class DataImporterDialog(QDialog):
                 next_button.setEnabled(False)
         else:
             # Handle empty data case - either reset operation or API call with 0 results
-            logger.debug(f"No data to display for {tab_name}, headers: {headers}")
             is_reset_operation = pagination_info.get('is_reset_operation', False)
 
             if is_reset_operation:
@@ -908,7 +900,6 @@ class DataImporterDialog(QDialog):
                 pagination_widget.setVisible(False)
             elif is_location_only:
                 # Even with no data, if it's a location-only request, show the location view with 0 records
-                logger.info("Showing location-only view with 0 records")
                 self._show_location_only_data(tab_widgets, 0)
             else:
                 # API call returned 0 results - show "No data present with given filters"
@@ -1322,10 +1313,9 @@ class DataImporterDialog(QDialog):
                 }
             """)
 
-            logger.info(f"Applied theme-aware button styling (dark_theme: {is_dark_theme})")
 
         except Exception as e:
-            logger.warning(f"Failed to apply theme-aware styling: {e}")
+            log_warning(f"Failed to apply theme-aware styling: {e}")
             # Fallback to basic styling that should work in any theme
             basic_style = """
                 QPushButton {
@@ -1384,9 +1374,8 @@ class DataImporterDialog(QDialog):
             # Set window geometry
             self.setGeometry(x, y, window_width, window_height)
 
-            logger.info(f"Set window geometry: {window_width}x{window_height} at ({x}, {y})")
 
         except Exception as e:
-            logger.warning(f"Failed to setup window geometry: {e}")
+            log_warning(f"Failed to setup window geometry: {e}")
             # Fallback to default behavior
             pass

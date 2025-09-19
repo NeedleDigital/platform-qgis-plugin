@@ -45,9 +45,8 @@ from ..config.constants import (
     DEFAULT_LAYER_STYLE, IMPORT_CHUNK_SIZE, OSM_LAYER_NAME,
     OSM_LAYER_URL, AUTO_ZOOM_THRESHOLD
 )
-from .logging import get_logger
+from .logging import log_error, log_warning
 
-logger = get_logger(__name__)
 
 class QGISLayerManager:
     """QGIS Layer Management and Integration Helper.
@@ -141,14 +140,13 @@ class QGISLayerManager:
             if self.iface and len(features) <= AUTO_ZOOM_THRESHOLD:
                 self._zoom_to_layer(layer)
             elif len(features) > AUTO_ZOOM_THRESHOLD:
-                logger.info(f"Skipping auto-zoom for large dataset ({len(features)} > {AUTO_ZOOM_THRESHOLD} records)")
+                pass
             
-            logger.info(f"Created layer '{layer_name}' with {len(features)} features")
             return True, f"Successfully imported {len(features)} records"
             
         except Exception as e:
             error_msg = f"Failed to create layer: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return False, error_msg
     
     def _create_fields_from_data(self, sample_record: Dict[str, Any]) -> List[QgsField]:
@@ -183,7 +181,7 @@ class QGISLayerManager:
             # Extract coordinates
             lat, lon = self._extract_coordinates(record)
             if lat is None or lon is None:
-                logger.warning(f"Skipping record with invalid coordinates: {record}")
+                log_warning(f"Skipping record with invalid coordinates: {record}")
                 return None
             
             # Create point geometry
@@ -200,7 +198,7 @@ class QGISLayerManager:
             return feature
             
         except Exception as e:
-            logger.error(f"Failed to create feature from record {record}: {e}")
+            log_error(f"Failed to create feature from record {record}: {e}")
             return None
     
     def _extract_coordinates(self, record: Dict[str, Any]) -> Tuple[Optional[float], Optional[float]]:
@@ -254,7 +252,7 @@ class QGISLayerManager:
             layer.triggerRepaint()
 
         except Exception as e:
-            logger.warning(f"Failed to apply layer styling: {e}")
+            log_warning(f"Failed to apply layer styling: {e}")
 
 
     def _setup_hover_tooltips(self, layer: QgsVectorLayer):
@@ -262,7 +260,6 @@ class QGISLayerManager:
         try:
             # Get field names from the layer
             field_names = [field.name() for field in layer.fields()]
-            logger.info(f"Available fields for hover tooltips: {field_names}")
 
             # Find company name field - try common variations
             company_field = None
@@ -280,7 +277,6 @@ class QGISLayerManager:
 
             # Only setup tooltips if we have at least one of the required fields
             if not company_field and not hole_id_field:
-                logger.info("No company name or hole ID fields found - skipping hover tooltips")
                 return
 
             # Build HTML template for hover tooltip
@@ -288,11 +284,9 @@ class QGISLayerManager:
 
             if company_field:
                 tooltip_parts.append(f'<b>Company:</b> [% "{company_field}" %]')
-                logger.info(f"Using field '{company_field}' for company name in tooltips")
 
             if hole_id_field:
                 tooltip_parts.append(f'<b>Hole ID:</b> [% "{hole_id_field}" %]')
-                logger.info(f"Using field '{hole_id_field}' for hole ID in tooltips")
 
             # Create HTML template with good readability (light background, dark text)
             tooltip_html = f"""
@@ -312,10 +306,9 @@ class QGISLayerManager:
             # Set the map tip template
             layer.setMapTipTemplate(tooltip_html)
 
-            logger.info(f"Hover tooltips configured for layer '{layer.name()}' with fields: {[company_field, hole_id_field]}")
 
         except Exception as e:
-            logger.warning(f"Failed to setup hover tooltips: {e}")
+            log_warning(f"Failed to setup hover tooltips: {e}")
 
     def _zoom_to_layer(self, layer: QgsVectorLayer):
         """Zoom to the full extent of the layer with proper CRS transformation."""
@@ -326,7 +319,7 @@ class QGISLayerManager:
             # Get layer extent in layer's CRS
             layer_extent = layer.extent()
             if layer_extent.isEmpty():
-                logger.warning("Layer extent is empty, cannot zoom")
+                log_warning("Layer extent is empty, cannot zoom")
                 return
 
             map_canvas = self.iface.mapCanvas()
@@ -335,8 +328,6 @@ class QGISLayerManager:
             layer_crs = layer.crs()
             canvas_crs = map_canvas.mapSettings().destinationCrs()
 
-            logger.info(f"Layer CRS: {layer_crs.authid()}, Canvas CRS: {canvas_crs.authid()}")
-            logger.info(f"Layer extent before transform: {layer_extent}")
 
             # Transform extent if CRS differs
             extent_to_use = layer_extent
@@ -344,9 +335,8 @@ class QGISLayerManager:
                 transform = QgsCoordinateTransform(layer_crs, canvas_crs, QgsProject.instance())
                 try:
                     extent_to_use = transform.transformBoundingBox(layer_extent)
-                    logger.info(f"Transformed extent: {extent_to_use}")
                 except Exception as transform_error:
-                    logger.warning(f"Failed to transform extent: {transform_error}, using original")
+                    log_warning(f"Failed to transform extent: {transform_error}, using original")
                     extent_to_use = layer_extent
 
             # Add some padding around the data (10% buffer)
@@ -365,15 +355,14 @@ class QGISLayerManager:
             map_canvas.setExtent(extent_to_use)
             map_canvas.refresh()
 
-            logger.info(f"Zoomed to extent: {extent_to_use}")
 
         except Exception as e:
-            logger.error(f"Failed to zoom to layer: {e}")
+            log_error(f"Failed to zoom to layer: {e}")
             # Fallback to default zoom method
             try:
                 self.iface.zoomToActiveLayer()
             except Exception as fallback_error:
-                logger.error(f"Fallback zoom also failed: {fallback_error}")
+                log_error(f"Fallback zoom also failed: {fallback_error}")
     
     def show_message(self, message: str, level: Qgis.MessageLevel = Qgis.Info, 
                     duration: int = 3) -> None:
@@ -385,7 +374,7 @@ class QGISLayerManager:
                 # Fallback to message log
                 QgsMessageLog.logMessage(f"Needle Digital: {message}", "Plugins", level)
         except Exception as e:
-            logger.error(f"Failed to show message: {e}")
+            log_error(f"Failed to show message: {e}")
     
     def add_osm_base_layer(self) -> Tuple[bool, str]:
         """Add OpenStreetMap base layer if it doesn't already exist."""
@@ -395,7 +384,6 @@ class QGISLayerManager:
             # Check if OSM layer already exists
             existing_layers = project.mapLayersByName(OSM_LAYER_NAME)
             if existing_layers:
-                logger.info("OpenStreetMap layer already exists, skipping creation")
                 return True, "OpenStreetMap layer already exists"
             
             # Create OSM layer
@@ -403,7 +391,7 @@ class QGISLayerManager:
             
             if not osm_layer.isValid():
                 error_msg = "Failed to create OpenStreetMap layer"
-                logger.error(error_msg)
+                log_error(error_msg)
                 return False, error_msg
             
             # Add layer to project (at the bottom of layer tree)
@@ -413,12 +401,11 @@ class QGISLayerManager:
             root = project.layerTreeRoot()
             root.insertLayer(0, osm_layer)
             
-            logger.info("OpenStreetMap base layer added successfully")
             return True, "OpenStreetMap base layer added successfully"
             
         except Exception as e:
             error_msg = f"Failed to add OpenStreetMap layer: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return False, error_msg
     
     def create_point_layer_chunked(self, layer_name: str, data: List[Dict[str, Any]],
@@ -443,7 +430,6 @@ class QGISLayerManager:
                 return False, "No data to import"
             
             total_records = len(data)
-            logger.info(f"Starting chunked import of {total_records} records")
             
             # Create layer with WGS84 CRS since data is in lat/lon coordinates
             crs = QgsCoordinateReferenceSystem("EPSG:4326")
@@ -486,9 +472,8 @@ class QGISLayerManager:
                     success = provider.addFeatures(chunk_features)
                     if success:
                         total_features_added += len(chunk_features)
-                        logger.info(f"Added chunk {chunk_start // chunk_size + 1}: {len(chunk_features)} features")
                     else:
-                        logger.warning(f"Failed to add some features in chunk {chunk_start // chunk_size + 1}")
+                        log_warning(f"Failed to add some features in chunk {chunk_start // chunk_size + 1}")
                 
                 processed_count += len(chunk_data)
                 
@@ -518,13 +503,12 @@ class QGISLayerManager:
             if self.iface and total_features_added <= AUTO_ZOOM_THRESHOLD:
                 self._zoom_to_layer(layer)
             elif total_features_added > AUTO_ZOOM_THRESHOLD:
-                logger.info(f"Skipping auto-zoom for large dataset ({total_features_added} > {AUTO_ZOOM_THRESHOLD} records)")
+                pass
             
             success_msg = f"Successfully imported {total_features_added:,} records in {(total_records + chunk_size - 1) // chunk_size} chunks"
-            logger.info(f"Chunked import completed: {success_msg}")
             return True, success_msg
             
         except Exception as e:
             error_msg = f"Failed to create layer with chunked import: {str(e)}"
-            logger.error(error_msg)
+            log_error(error_msg)
             return False, error_msg

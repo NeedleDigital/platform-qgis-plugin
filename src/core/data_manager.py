@@ -40,9 +40,8 @@ from ..config.constants import (
 )  # Configuration
 from ..config.settings import config  # Application settings
 from ..utils.validation import validate_fetch_all_request  # Request validation
-from ..utils.logging import get_logger, log_api_request, log_api_response  # Logging utilities
+from ..utils.logging import log_api_request, log_api_response, log_error  # Logging utilities
 
-logger = get_logger(__name__)
 
 class DataManager(QObject):
     """Core data management class for handling API requests and data processing.
@@ -129,7 +128,6 @@ class DataManager(QObject):
         if not self._is_fetching:
             return
         
-        logger.info("Cancelling API requests...")
         
         # Cancel all active network requests
         self.api_client.cancel_all_requests()
@@ -146,7 +144,6 @@ class DataManager(QObject):
         self.loading_finished.emit("Holes")
         self.loading_finished.emit("Assays")
         
-        logger.info("API requests cancelled successfully")
     
     def fetch_data(self, tab_name: str, filter_params: Dict[str, Any], 
                    fetch_all: bool = False) -> None:
@@ -201,7 +198,7 @@ class DataManager(QObject):
             # For fetch_all: First get count, then fetch data
             count_endpoint = API_ENDPOINTS['holes_count'] if tab_name == 'Holes' else API_ENDPOINTS['assays_count']
             
-            log_api_request(count_endpoint, filter_params, logger)
+            log_api_request(count_endpoint, filter_params)
             self.status_changed.emit("Calculating total available records...")
             self.progress_changed.emit(1)
             
@@ -228,13 +225,11 @@ class DataManager(QObject):
         """Handle the response from count API."""
         try:
             
-            logger.info(f"Count response structure: keys={list(response_data.keys())}")
-            logger.info(f"Full count response: {response_data}")
             
             total_count = int(response_data.get('total_count', 0))
             self.tab_states[tab_name]['total_records'] = total_count
             
-            log_api_response(f"{tab_name.lower()}_count", True, total_count, logger)
+            log_api_response(f"{tab_name.lower()}_count", True, total_count)
             
             if total_count == 0:
                 self.progress_changed.emit(-1)  # Hide progress bar
@@ -259,7 +254,7 @@ class DataManager(QObject):
             
         except Exception as e:
             error_msg = f"Failed to process count response: {e}"
-            logger.error(error_msg)
+            log_error(error_msg)
             self.error_occurred.emit(error_msg)
             self._is_fetching = False
             self.loading_finished.emit(tab_name)
@@ -310,7 +305,7 @@ class DataManager(QObject):
         self.progress_changed.emit(progress)
         self.status_changed.emit(f"Fetching chunk {chunk_index + 1} of {status['total_chunks']}...")
         
-        log_api_request(data_endpoint, chunk_params, logger)
+        log_api_request(data_endpoint, chunk_params)
         
         self.api_client.make_api_request(
             data_endpoint,
@@ -363,22 +358,16 @@ class DataManager(QObject):
                     headers = self.tab_states[tab_name]['headers']
             
             
-            logger.info(f"Chunk response structure: keys={list(response_data.keys())}")
-            logger.info(f"Chunk data length: {len(chunk_data)}")
-            logger.info(f"Headers: {headers}")
-            logger.debug(f"Is location only: {is_location_only}")
-            logger.debug(f"Sample chunk data: {chunk_data[:2] if chunk_data else 'None'}")
             
             # Store headers (from first chunk or when format changes)
             if not self.tab_states[tab_name]['headers'] or is_location_only:
                 self.tab_states[tab_name]['headers'] = headers
-                logger.info(f"Headers updated for {tab_name}: {headers} (location_only: {is_location_only})")
             
             # Append chunk data
             status['all_data'].extend(chunk_data)
             status['next_chunk_index'] += 1
             
-            log_api_response(f"{tab_name.lower()}_data_chunk", True, len(chunk_data), logger)
+            log_api_response(f"{tab_name.lower()}_data_chunk", True, len(chunk_data))
             
             # Check if we're done or if API returned empty results (no more data available)
             if (len(chunk_data) == 0 or  # Empty response - no more data available
@@ -386,8 +375,7 @@ class DataManager(QObject):
                 len(status['all_data']) >= status['records_to_fetch']):
                 
                 if len(chunk_data) == 0:
-                    logger.info(f"API returned empty results - stopping fetch for {tab_name}")
-                    self.status_changed.emit(f"No more data available. Fetched {len(status['all_data'])} records.")
+                        self.status_changed.emit(f"No more data available. Fetched {len(status['all_data'])} records.")
                 
                 self._finalize_data_fetch()
             else:
@@ -396,7 +384,7 @@ class DataManager(QObject):
                 
         except Exception as e:
             error_msg = f"Failed to process chunk response: {e}"
-            logger.error(error_msg)
+            log_error(error_msg)
             self.error_occurred.emit(error_msg)
             
             # Get tab_name before clearing batch_fetch_status
@@ -437,7 +425,6 @@ class DataManager(QObject):
             final_headers = self.tab_states[tab_name]['headers']
             final_data = self.tab_states[tab_name]['data']
 
-            logger.info(f"Emitting data_ready for {tab_name}: {len(final_data)} records, headers: {final_headers}")
 
             self.data_ready.emit(
                 tab_name,
@@ -446,11 +433,10 @@ class DataManager(QObject):
                 pagination_info
             )
             
-            logger.info(f"Data fetch completed: {record_count} records for {tab_name} in {fetch_time:.1f}s")
             
         except Exception as e:
             error_msg = f"Failed to finalize data fetch: {e}"
-            logger.error(error_msg)
+            log_error(error_msg)
             self.error_occurred.emit(error_msg)
         finally:
             self.batch_fetch_status = None
@@ -507,7 +493,7 @@ class DataManager(QObject):
     
     def _handle_api_error(self, endpoint: str, error_message: str) -> None:
         """Handle API error signals."""
-        logger.error(f"API Error for {endpoint}: {error_message}")
+        log_error(f"API Error for {endpoint}: {error_message}")
         self.error_occurred.emit(f"API request failed: {error_message}")
         
         # Reset batch fetch status on error
@@ -590,8 +576,7 @@ class DataManager(QObject):
             company_name: Company name search query (minimum 3 characters)
         """
         if not self.is_authenticated():
-            logger.warning("Cannot search companies - user not authenticated")
-            return
+                return
         
         if not company_name or len(company_name.strip()) < 3:
             # Clear search results for short queries
@@ -600,7 +585,6 @@ class DataManager(QObject):
         
         search_params = {'company_name': company_name.strip()}
         
-        logger.info(f"Searching companies with query: {company_name}")
         
         self.api_client.make_api_request(
             API_ENDPOINTS['companies_search'],
@@ -619,7 +603,6 @@ class DataManager(QObject):
                 # Dict response with companies key
                 companies = response_data.get('companies', [])
             else:
-                logger.warning(f"Unexpected response type: {type(response_data)}")
                 companies = []
             
             # Convert to list of (display_name, value) tuples expected by DynamicSearchFilterWidget
@@ -634,12 +617,11 @@ class DataManager(QObject):
                 
                 company_results.append((company_name, company_name))
             
-            logger.info(f"Found {len(company_results)} companies")
             self.companies_search_results.emit(company_results)
 
         except Exception as e:
             error_msg = f"Failed to process companies search response: {e}"
-            logger.error(error_msg)
+            log_error(error_msg)
             # Emit empty results on error
             self.companies_search_results.emit([])
 
@@ -651,12 +633,10 @@ class DataManager(QObject):
         If the API fails, it emits the default hole types as fallback.
         """
         if not self.is_authenticated():
-            logger.warning("Cannot fetch hole types - user not authenticated")
-            # Emit default hole types even if not authenticated
+                # Emit default hole types even if not authenticated
             self.hole_types_fetched.emit(DEFAULT_HOLE_TYPES)
             return
 
-        logger.info("Fetching hole types from API")
 
         self.api_client.make_api_request(
             API_ENDPOINTS['hole_types'],
@@ -676,7 +656,6 @@ class DataManager(QObject):
                 # Direct list response
                 hole_types = response_data
             else:
-                logger.warning(f"Unexpected response type: {type(response_data)}")
                 hole_types = []
 
             # Validate and clean hole types
@@ -687,26 +666,17 @@ class DataManager(QObject):
 
             # Use default if no valid hole types received
             if not valid_hole_types:
-                logger.warning("No valid hole types received from API, using defaults")
                 valid_hole_types = DEFAULT_HOLE_TYPES
 
-            logger.info(f"Fetched {len(valid_hole_types)} hole types: {valid_hole_types}")
             self.hole_types_fetched.emit(valid_hole_types)
 
         except Exception as e:
             error_msg = f"Failed to process hole types response: {e}"
-            logger.error(error_msg)
+            log_error(error_msg)
             # Emit default hole types on error
-            logger.info("Using default hole types due to API error")
             self.hole_types_fetched.emit(DEFAULT_HOLE_TYPES)
 
     def _handle_hole_types_error(self, error_message: str) -> None:
         """Handle hole types API errors without showing popups to user."""
         # Log error for debugging but don't show popup to user
-        logger.warning(f"Hole types API failed: {error_message}")
-        logger.info(f"QGIS Console: Hole types API error - {error_message}")  # Log to console via Relic
-
-        # Use default hole types as fallback
-        logger.info("Using default hole types due to API failure")
-        logger.info(f"QGIS Console: Using default hole types: {DEFAULT_HOLE_TYPES}")  # Log to console via Relic
         self.hole_types_fetched.emit(DEFAULT_HOLE_TYPES)
