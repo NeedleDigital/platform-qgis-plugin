@@ -4,8 +4,8 @@
 [general]
 name=ND Data Importer
 qgisMinimumVersion=3.0
-description=Comprehensive QGIS plugin for importing Australian mining drill hole and assay data with advanced filtering and large dataset optimization
-version=1.0.0
+description=Comprehensive QGIS plugin for importing Australian mining drill hole and assay data with advanced filtering, large dataset optimization, and enhanced theme-aware UI
+version=1.1.0
 author=Needle Digital
 email=divyansh@needle-digital.com
 
@@ -29,6 +29,16 @@ tags=mining, drill hole, assay, geochemistry, database, australia, import, data
 
 # Changelog
 changelog=
+    1.1.0 - Enhanced UI/UX with Theme-Aware Styling
+        - Implemented comprehensive theme-aware button styling system
+        - Added automatic light/dark theme detection for better visibility
+        - Replaced harsh bright colors with soothing, eye-friendly palette
+        - Enhanced dropdown styling for assay filter and operator selectors
+        - Improved button contrast and readability across all QGIS themes
+        - Added hover and focus states for better user interaction feedback
+        - Configurable theme defaults with fallback styling support
+        - Professional color scheme: sage greens, soft blues, dusty roses
+
     1.0.0 - Initial release
         - Complete drill hole and assay data import functionality
         - State-wise and company-based data filtering
