@@ -233,6 +233,7 @@ class DataImporter:
         self.data_manager.loading_started.connect(self.dlg.show_loading)  # Show loading state
         self.data_manager.loading_finished.connect(self.dlg.hide_loading)  # Hide loading state
         self.data_manager.companies_search_results.connect(self.dlg.handle_company_search_results)  # Company search results
+        self.data_manager.hole_types_fetched.connect(self.dlg.handle_hole_types_results)  # Hole types results
         
         # API client signals
         self.data_manager.api_client.login_success.connect(self._handle_login_success)
@@ -314,10 +315,13 @@ class DataImporter:
             
             if self.iface:
                 self.iface.messageBar().pushMessage(
-                    "Success", "Login successful!", 
+                    "Success", "Login successful!",
                     level=Qgis.Success, duration=3
                 )
-            
+
+            # Fetch hole types after successful login
+            self.data_manager.fetch_hole_types()
+
             logger.info("Login successful")
             
         except Exception as e:

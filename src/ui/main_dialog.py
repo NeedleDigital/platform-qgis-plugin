@@ -32,10 +32,10 @@ Contact: divyansh@needle-digital.com
 """
 
 from qgis.PyQt.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, 
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTabWidget, QTableWidget, QTableWidgetItem, QProgressBar, QWidget,
     QFormLayout, QSpacerItem, QSizePolicy, QHeaderView, QMessageBox,
-    QStackedLayout, QComboBox, QCheckBox
+    QStackedLayout, QComboBox, QCheckBox, QApplication
 )
 from qgis.PyQt.QtGui import QFont, QCursor, QDoubleValidator
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer
@@ -47,7 +47,7 @@ from .components import (
 from ..config.constants import (
     AUSTRALIAN_STATES, CHEMICAL_ELEMENTS, COMPARISON_OPERATORS, UI_CONFIG,
     LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY, MAX_SAFE_IMPORT_LOCATION_ONLY,
-    PARTIAL_IMPORT_LIMIT_LOCATION_ONLY
+    PARTIAL_IMPORT_LIMIT_LOCATION_ONLY, DEFAULT_HOLE_TYPES
 )
 from ..utils.logging import get_logger
 
@@ -89,12 +89,15 @@ class DataImporterDialog(QDialog):
         
         # Set window flags to include minimize button and proper window management
         self.setWindowFlags(
-            Qt.Window | 
-            Qt.WindowMinimizeButtonHint | 
-            Qt.WindowMaximizeButtonHint | 
+            Qt.Window |
+            Qt.WindowMinimizeButtonHint |
+            Qt.WindowMaximizeButtonHint |
             Qt.WindowCloseButtonHint |
             Qt.WindowSystemMenuHint
         )
+
+        # Set window size to 75% width and full height, centered to QGIS
+        self._setup_window_geometry()
 
         self.main_layout = QVBoxLayout(self)
         
@@ -167,10 +170,22 @@ class DataImporterDialog(QDialog):
         # Set "All States" as default (first item, empty value)
         state_filter.setCurrentData([""])
         controls_layout.addRow("State(s):", state_filter)
-        
+
+        # Hole Type filter (will be positioned differently for each tab)
+        hole_type_filter = StaticFilterWidget()
+        # Add "All" as the first option (default)
+        hole_type_items = [("All Hole Types", "")]  # Display name, value
+        # Add default hole types as options
+        for hole_type in DEFAULT_HOLE_TYPES:
+            hole_type_items.append((hole_type, hole_type))
+        hole_type_filter.addItems(hole_type_items)
+        # Set "All" as default (first item, empty value)
+        hole_type_filter.setCurrentData([""])
+
         widgets = {
             'widget': tab_widget,
-            'state_filter': state_filter
+            'state_filter': state_filter,
+            'hole_type_filter': hole_type_filter
         }
         
         if tab_type == "Holes":
@@ -180,9 +195,34 @@ class DataImporterDialog(QDialog):
             controls_layout.addRow("Company Name(s):", company_filter)
             widgets['company_filter'] = company_filter
 
-            # Max Depth filter (holes only)
+            # Hole Type and Max Depth in same row
+            hole_depth_layout = QHBoxLayout()
+            hole_depth_layout.setContentsMargins(0, 0, 0, 0)
+            hole_depth_layout.setAlignment(Qt.AlignTop)  # Align contents to top
+
+            # Hole Type filter container (2 parts of 2:1 ratio)
+            hole_type_container = QWidget()
+            hole_type_container_layout = QVBoxLayout(hole_type_container)
+            hole_type_container_layout.setContentsMargins(0, 0, 0, 0)
+            hole_type_container_layout.setAlignment(Qt.AlignTop)
+
+            hole_type_filter.setMaximumWidth(9999)  # Remove width constraint
+            hole_type_filter.setMinimumWidth(200)  # Set reasonable minimum
+            hole_type_container_layout.addWidget(hole_type_filter)
+            hole_depth_layout.addWidget(hole_type_container, 2)  # 2 parts of the ratio
+
+            hole_depth_layout.addSpacing(10)  # Small spacing between components
+
+            # Max Depth filter container (1 part of 2:1 ratio)
+            max_depth_container = QWidget()
+            max_depth_container_layout = QVBoxLayout(max_depth_container)
+            max_depth_container_layout.setContentsMargins(0, 0, 0, 0)
+            max_depth_container_layout.setAlignment(Qt.AlignTop)
+
             max_depth_input = QLineEdit()
-            max_depth_input.setPlaceholderText("Enter maximum depth (meters)")
+            max_depth_input.setPlaceholderText("Enter max depth (m)")
+            max_depth_input.setMinimumWidth(100)  # Minimum width for usability
+            max_depth_container_layout.addWidget(max_depth_input)
             # Add numeric validator - only allow positive numbers including decimals
             depth_validator = QDoubleValidator()
             depth_validator.setBottom(0.0)  # Cannot be less than 0
@@ -209,7 +249,14 @@ class DataImporterDialog(QDialog):
                     max_depth_input.setToolTip("Please enter a valid numeric value")
 
             max_depth_input.textChanged.connect(on_depth_text_changed)
-            controls_layout.addRow("Max Depth (m):", max_depth_input)
+
+            # Add max depth input to its container
+            max_depth_container_layout.addWidget(max_depth_input)
+
+            # Add the container to the main layout with 1 part of the ratio
+            hole_depth_layout.addWidget(max_depth_container, 1)
+
+            controls_layout.addRow("Hole Type & Depth:", hole_depth_layout)
             widgets['max_depth_input'] = max_depth_input
 
             # Record count controls
@@ -325,10 +372,23 @@ class DataImporterDialog(QDialog):
                 'value_container': value_container
             })
 
-            # Company filter (same as in Holes section)
+            # Hole Type filter (separate row with container for proper alignment)
+            hole_type_container_assays = QWidget()
+            hole_type_container_layout_assays = QVBoxLayout(hole_type_container_assays)
+            hole_type_container_layout_assays.setContentsMargins(0, 0, 0, 0)
+            hole_type_container_layout_assays.setAlignment(Qt.AlignTop)
+            hole_type_container_layout_assays.addWidget(hole_type_filter)
+            controls_layout.addRow("Hole Type(s):", hole_type_container_assays)
+
+            # Company filter (separate row with container for proper alignment)
             company_filter = DynamicSearchFilterWidget()
             company_filter.search_box.setPlaceholderText("Type to search companies...")
-            controls_layout.addRow("Company Name(s):", company_filter)
+            company_filter_container = QWidget()
+            company_filter_container_layout = QVBoxLayout(company_filter_container)
+            company_filter_container_layout.setContentsMargins(0, 0, 0, 0)
+            company_filter_container_layout.setAlignment(Qt.AlignTop)
+            company_filter_container_layout.addWidget(company_filter)
+            controls_layout.addRow("Company Name(s):", company_filter_container)
             widgets['company_filter'] = company_filter
 
             # Record count controls
@@ -587,6 +647,13 @@ class DataImporterDialog(QDialog):
         valid_states = [state for state in selected_states if state and state.strip()]
         if valid_states:
             params['states'] = ",".join(valid_states)
+
+        # Handle hole types - convert to comma-separated string, exclude empty values
+        selected_hole_types = tab_widgets['hole_type_filter'].currentData()
+        # Filter out empty values (which represent "All Hole Types")
+        valid_hole_types = [hole_type for hole_type in selected_hole_types if hole_type and hole_type.strip()]
+        if valid_hole_types:
+            params['hole_type'] = ",".join(valid_hole_types)
         
         if tab_name == "Holes":
             companies = tab_widgets['company_filter'].currentData()
@@ -1023,6 +1090,7 @@ class DataImporterDialog(QDialog):
             
             # Disable filter controls
             tab_widgets['state_filter'].setEnabled(False)
+            tab_widgets['hole_type_filter'].setEnabled(False)
             
             if tab_name == "Holes":
                 tab_widgets['company_filter'].setEnabled(False)
@@ -1059,6 +1127,7 @@ class DataImporterDialog(QDialog):
             
             # Re-enable filter controls
             tab_widgets['state_filter'].setEnabled(True)
+            tab_widgets['hole_type_filter'].setEnabled(True)
             
             if tab_name == "Holes":
                 tab_widgets['company_filter'].setEnabled(True)
@@ -1091,6 +1160,9 @@ class DataImporterDialog(QDialog):
         
         # Reset state filter to "All States" (first item, empty value)
         holes_tab['state_filter'].setCurrentData([""])
+
+        # Reset hole type filter to "All Hole Types" (first item, empty value)
+        holes_tab['hole_type_filter'].setCurrentData([""])
         
         # Reset company filter
         holes_tab['company_filter'].setCurrentData([])
@@ -1111,6 +1183,9 @@ class DataImporterDialog(QDialog):
         
         # Reset state filter to "All States" (first item, empty value)
         assays_tab['state_filter'].setCurrentData([""])
+
+        # Reset hole type filter to "All Hole Types" (first item, empty value)
+        assays_tab['hole_type_filter'].setCurrentData([""])
         
         # Reset element to first item (index 0)
         assays_tab['element_input'].setCurrentIndex(0)
@@ -1148,8 +1223,69 @@ class DataImporterDialog(QDialog):
     
     def handle_company_search_results(self, results: list):
         """Handle company search results from the API."""
-        # Show results in both company filter popups (Holes and Assays)
-        if hasattr(self.holes_tab['company_filter'], 'showPopup'):
-            self.holes_tab['company_filter'].showPopup(results)
-        if hasattr(self.assays_tab['company_filter'], 'showPopup'):
-            self.assays_tab['company_filter'].showPopup(results)
+        # Only show results in the currently active tab's company filter
+        current_tab_index = self.tabs.currentIndex()
+        current_tab_name = "Holes" if current_tab_index == 0 else "Assays"
+
+        if current_tab_name == "Holes":
+            if hasattr(self.holes_tab['company_filter'], 'showPopup'):
+                self.holes_tab['company_filter'].showPopup(results)
+        else:  # Assays
+            if hasattr(self.assays_tab['company_filter'], 'showPopup'):
+                self.assays_tab['company_filter'].showPopup(results)
+
+    def handle_hole_types_results(self, hole_types: list):
+        """Handle hole types results from the API."""
+        # Update both hole type filters (Holes and Assays)
+        hole_type_items = [("All Hole Types", "")]  # Default "All" option
+
+        # Add the fetched hole types
+        for hole_type in hole_types:
+            if isinstance(hole_type, str) and hole_type.strip():
+                hole_type_items.append((hole_type, hole_type))
+
+        # Update both filters with the new items
+        self.holes_tab['hole_type_filter'].updateItems(hole_type_items)
+        self.assays_tab['hole_type_filter'].updateItems(hole_type_items)
+
+        # Reset both to "All" after updating
+        self.holes_tab['hole_type_filter'].setCurrentData([""])
+        self.assays_tab['hole_type_filter'].setCurrentData([""])
+
+    def _setup_window_geometry(self):
+        """Setup window size to 75% width and full height, centered to QGIS."""
+        try:
+            # Get the main QGIS window
+            qgis_main_window = None
+            for widget in QApplication.topLevelWidgets():
+                if widget.objectName() == "QgisApp":
+                    qgis_main_window = widget
+                    break
+
+            if qgis_main_window:
+                # Get QGIS window geometry
+                qgis_geometry = qgis_main_window.geometry()
+                qgis_screen = qgis_main_window.screen()
+            else:
+                # Fallback to primary screen if QGIS window not found
+                qgis_screen = QApplication.primaryScreen()
+                qgis_geometry = qgis_screen.availableGeometry()
+
+            # Calculate window size: 75% width, full available height
+            available_rect = qgis_screen.availableGeometry()
+            window_width = int(available_rect.width() * 0.75)
+            window_height = available_rect.height()
+
+            # Calculate center position
+            x = available_rect.x() + (available_rect.width() - window_width) // 2
+            y = available_rect.y()
+
+            # Set window geometry
+            self.setGeometry(x, y, window_width, window_height)
+
+            logger.info(f"Set window geometry: {window_width}x{window_height} at ({x}, {y})")
+
+        except Exception as e:
+            logger.warning(f"Failed to setup window geometry: {e}")
+            # Fallback to default behavior
+            pass

@@ -36,7 +36,7 @@ from qgis.PyQt.QtCore import QObject, pyqtSignal
 from ..api.client import ApiClient  # HTTP client for API communication
 from ..config.constants import (
     API_ENDPOINTS, API_FETCH_LIMIT, API_FETCH_LIMIT_LOCATION_ONLY,
-    VALIDATION_MESSAGES
+    VALIDATION_MESSAGES, DEFAULT_HOLE_TYPES
 )  # Configuration
 from ..config.settings import config  # Application settings
 from ..utils.validation import validate_fetch_all_request  # Request validation
@@ -83,6 +83,7 @@ class DataManager(QObject):
     loading_started = pyqtSignal(str)  # tab_name - Loading state begins
     loading_finished = pyqtSignal(str)  # tab_name - Loading state ends
     companies_search_results = pyqtSignal(list)  # Company search results
+    hole_types_fetched = pyqtSignal(list)  # Hole types fetched from API
     
     def __init__(self):
         super().__init__()
@@ -635,9 +636,77 @@ class DataManager(QObject):
             
             logger.info(f"Found {len(company_results)} companies")
             self.companies_search_results.emit(company_results)
-            
+
         except Exception as e:
             error_msg = f"Failed to process companies search response: {e}"
             logger.error(error_msg)
             # Emit empty results on error
             self.companies_search_results.emit([])
+
+    def fetch_hole_types(self) -> None:
+        """
+        Fetch hole types from the API.
+
+        This method calls the hole types API and emits the results.
+        If the API fails, it emits the default hole types as fallback.
+        """
+        if not self.is_authenticated():
+            logger.warning("Cannot fetch hole types - user not authenticated")
+            # Emit default hole types even if not authenticated
+            self.hole_types_fetched.emit(DEFAULT_HOLE_TYPES)
+            return
+
+        logger.info("Fetching hole types from API")
+
+        self.api_client.make_api_request(
+            API_ENDPOINTS['hole_types'],
+            {},  # No parameters needed for hole types API
+            self._handle_hole_types_response,
+            self._handle_hole_types_error  # Custom error handler to suppress popups
+        )
+
+    def _handle_hole_types_response(self, response_data) -> None:
+        """Handle the response from hole types API."""
+        try:
+            # Handle different response formats
+            if isinstance(response_data, dict):
+                # Expected format: {"hole_types": ["RAB", "DIAMOND", "AC", "RC"]}
+                hole_types = response_data.get('hole_types', [])
+            elif isinstance(response_data, list):
+                # Direct list response
+                hole_types = response_data
+            else:
+                logger.warning(f"Unexpected response type: {type(response_data)}")
+                hole_types = []
+
+            # Validate and clean hole types
+            valid_hole_types = []
+            for hole_type in hole_types:
+                if isinstance(hole_type, str) and hole_type.strip():
+                    valid_hole_types.append(hole_type.strip())
+
+            # Use default if no valid hole types received
+            if not valid_hole_types:
+                logger.warning("No valid hole types received from API, using defaults")
+                valid_hole_types = DEFAULT_HOLE_TYPES
+
+            logger.info(f"Fetched {len(valid_hole_types)} hole types: {valid_hole_types}")
+            self.hole_types_fetched.emit(valid_hole_types)
+
+        except Exception as e:
+            error_msg = f"Failed to process hole types response: {e}"
+            logger.error(error_msg)
+            # Emit default hole types on error
+            logger.info("Using default hole types due to API error")
+            self.hole_types_fetched.emit(DEFAULT_HOLE_TYPES)
+
+    def _handle_hole_types_error(self, error_message: str) -> None:
+        """Handle hole types API errors without showing popups to user."""
+        # Log error for debugging but don't show popup to user
+        logger.warning(f"Hole types API failed: {error_message}")
+        print(f"QGIS Console: Hole types API error - {error_message}")  # Print to QGIS Python console
+
+        # Use default hole types as fallback
+        logger.info("Using default hole types due to API failure")
+        print(f"QGIS Console: Using default hole types: {DEFAULT_HOLE_TYPES}")  # Print to QGIS Python console
+        self.hole_types_fetched.emit(DEFAULT_HOLE_TYPES)

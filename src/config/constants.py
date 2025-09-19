@@ -115,13 +115,17 @@ CHEMICAL_ELEMENTS: List[Tuple[str, str]] = [
 # Comparison operators for assay filtering
 COMPARISON_OPERATORS: List[str] = ['>', '<', '=', '!=', '>=', '<=']
 
+# Default hole types (fallback if API fails)
+DEFAULT_HOLE_TYPES: List[str] = ['RAB', 'DIAMOND', 'AC', 'RC']
+
 # API endpoints
 API_ENDPOINTS = {
     'holes_count': 'plugin/fetch_dh_count',
     'holes_data': 'plugin/fetch_drill_holes',
     'assays_count': 'plugin/fetch_assay_count',
     'assays_data': 'plugin/fetch_assay_samples',
-    'companies_search': 'companies/search'
+    'companies_search': 'companies/search',
+    'hole_types': 'plugin/fetch_hole_type'
 }
 
 # UI Configuration
