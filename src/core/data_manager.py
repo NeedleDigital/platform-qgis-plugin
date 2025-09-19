@@ -704,9 +704,9 @@ class DataManager(QObject):
         """Handle hole types API errors without showing popups to user."""
         # Log error for debugging but don't show popup to user
         logger.warning(f"Hole types API failed: {error_message}")
-        print(f"QGIS Console: Hole types API error - {error_message}")  # Print to QGIS Python console
+        logger.info(f"QGIS Console: Hole types API error - {error_message}")  # Log to console via Relic
 
         # Use default hole types as fallback
         logger.info("Using default hole types due to API failure")
-        print(f"QGIS Console: Using default hole types: {DEFAULT_HOLE_TYPES}")  # Print to QGIS Python console
+        logger.info(f"QGIS Console: Using default hole types: {DEFAULT_HOLE_TYPES}")  # Log to console via Relic
         self.hole_types_fetched.emit(DEFAULT_HOLE_TYPES)

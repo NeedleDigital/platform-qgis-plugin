@@ -90,20 +90,22 @@ class SafeNewRelicLogger:
 
                 with urllib.request.urlopen(req, timeout=10, context=ssl_context) as response:
                     status_code = response.getcode()
-                    if status_code in (200, 202):  # 200 = OK, 202 = Accepted
-                        print(f"✅ New Relic log sent successfully")
-                    else:
-                        print(f"❌ New Relic API error: HTTP {status_code}")
+                    # Silent success for production - no console output needed
+                    if status_code not in (200, 202):
+                        # Only log actual errors to stderr, not success
+                        sys.stderr.write(f"New Relic API error: HTTP {status_code}\n")
 
             except urllib.error.HTTPError as e:
+                # Log errors to stderr for debugging without cluttering console
                 if e.code == 401:
-                    print(f"❌ New Relic API error: 401 Unauthorized - Invalid or missing API key")
+                    sys.stderr.write("New Relic API error: 401 Unauthorized - Invalid or missing API key\n")
                 elif e.code == 403:
-                    print(f"❌ New Relic API error: 403 Forbidden - API key lacks required permissions")
+                    sys.stderr.write("New Relic API error: 403 Forbidden - API key lacks required permissions\n")
                 else:
-                    print(f"❌ New Relic API error: HTTP {e.code} - {e.reason}")
+                    sys.stderr.write(f"New Relic API error: HTTP {e.code} - {e.reason}\n")
             except Exception as e:
-                print(f"❌ New Relic request failed: {e}")
+                # Silent failure for network issues - don't spam console
+                pass
 
         # Run in background thread to avoid blocking QGIS
         thread = threading.Thread(target=send_request, daemon=True)
@@ -168,7 +170,7 @@ def get_logger(name: str, level: Optional[str] = None) -> logging.Logger:
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
         handler.setFormatter(formatter)
         logger.addHandler(handler)
-        log_level = getattr(logging, (level or 'DEBUG').upper(), logging.DEBUG)
+        log_level = getattr(logging, (level or 'INFO').upper(), logging.INFO)
         logger.setLevel(log_level)
     return logger
 
@@ -181,7 +183,8 @@ def log_api_request(endpoint: str, params: dict, logger: logging.Logger = None) 
         if logger:
             logger.info(message)
         else:
-            print(message)  # Simple console output, no network calls
+            # Use stderr for debugging output to avoid cluttering stdout
+            sys.stderr.write(f"DEBUG: {message}\n")
     except Exception:
         pass  # Silently fail to prevent crashes
 

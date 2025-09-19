@@ -37,7 +37,7 @@ from qgis.PyQt.QtWidgets import (
     QFormLayout, QSpacerItem, QSizePolicy, QHeaderView, QMessageBox,
     QStackedLayout, QComboBox, QCheckBox, QApplication
 )
-from qgis.PyQt.QtGui import QFont, QCursor, QDoubleValidator
+from qgis.PyQt.QtGui import QFont, QCursor, QDoubleValidator, QColor
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer
 
 from .components import (
@@ -71,7 +71,10 @@ class DataImporterDialog(QDialog):
         super(DataImporterDialog, self).__init__(parent)
         self._setup_ui()
         self._connect_signals()
-        
+
+        # Apply theme-aware styling for buttons
+        self._apply_theme_aware_styling()
+
         # Track loading state for each tab
         self._loading_states = {'Holes': False, 'Assays': False}
         
@@ -462,22 +465,7 @@ class DataImporterDialog(QDialog):
         location_import_button.setMaximumWidth(200)
         location_import_button.setDefault(False)
         location_import_button.setAutoDefault(False)
-        location_import_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2196F3;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                font-weight: bold;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #1976D2;
-            }
-            QPushButton:pressed {
-                background-color: #0D47A1;
-            }
-        """)
+        # Style will be applied by _apply_theme_aware_styling() method
 
         location_layout.addWidget(location_info_label)
         location_layout.addSpacing(20)
@@ -560,25 +548,7 @@ class DataImporterDialog(QDialog):
         self.cancel_button.setAutoDefault(False)
         self.cancel_button.setVisible(False)  # Hidden by default
         
-        # Style the button to make it smaller and fit in status bar
-        self.cancel_button.setStyleSheet("""
-            QPushButton {
-                background-color: #f44336;
-                color: white;
-                font-weight: normal;
-                padding: 4px 8px;
-                border: none;
-                border-radius: 3px;
-                font-size: 10px;
-                max-height: 20px;
-            }
-            QPushButton:hover {
-                background-color: #d32f2f;
-            }
-            QPushButton:pressed {
-                background-color: #b71c1c;
-            }
-        """)
+        # Style will be applied by _apply_theme_aware_styling() method
         
         status_layout.addWidget(self.status_label)
         status_layout.addWidget(self.progress_bar)
@@ -947,26 +917,6 @@ class DataImporterDialog(QDialog):
                 pagination_widget.setVisible(False)
 
 
-    def debug_test_location_display(self):
-        """Debug method to test location-only display. Call from QGIS Python console."""
-        logger.info("DEBUG: Testing location-only display manually")
-
-        # Create test data
-        test_data = [
-            {'latitude': -27.4698, 'longitude': 153.0251, 'location_string': '-27.4698,153.0251'},
-            {'latitude': -33.8688, 'longitude': 151.2093, 'location_string': '-33.8688,151.2093'},
-            {'latitude': -37.8136, 'longitude': 144.9631, 'location_string': '-37.8136,144.9631'}
-        ]
-
-        test_headers = ['latitude', 'longitude', 'location_string']
-        test_pagination = {
-            'has_data': True, 'current_page': 1, 'total_pages': 1,
-            'showing_records': 3, 'total_records': 3, 'records_per_page': 100
-        }
-
-        logger.info(f"DEBUG: Calling show_data with {len(test_data)} location records")
-        self.show_data("Holes", test_data, test_headers, test_pagination)
-        return True
     
     def show_error(self, message: str):
         """Show error message."""
@@ -1251,6 +1201,157 @@ class DataImporterDialog(QDialog):
         # Reset both to "All" after updating
         self.holes_tab['hole_type_filter'].setCurrentData([""])
         self.assays_tab['hole_type_filter'].setCurrentData([""])
+
+    def _apply_theme_aware_styling(self):
+        """Apply theme-aware styling to buttons for visibility in both light and dark themes."""
+        try:
+            # Get the current palette to detect theme
+            palette = QApplication.palette()
+
+            # Determine if we're in dark theme by checking window background
+            window_color = palette.color(palette.Window)
+            is_dark_theme = window_color.lightness() < 128
+
+            # Define colors based on theme - softer, more soothing colors
+            if is_dark_theme:
+                # Dark theme colors - muted and easy on eyes
+                primary_bg = "#303131"      # Soft sage green
+                primary_text = "#FFFFFF"    # White text
+                secondary_bg = "#6B8CAE"    # Muted blue-gray
+                secondary_text = "#FFFFFF"  # White text
+                danger_bg = "#D75A5A"       # Muted rose/dusty red
+                danger_text = "#FFFFFF"     # White text
+                border_color = "#666666"    # Gray border
+            else:
+                # Light theme colors - soft pastels
+                primary_bg = "#8DB5A2"      # Light sage green
+                primary_text = "#FFFFFF"    # White text
+                secondary_bg = "#9BB2D1"    # Soft periwinkle blue
+                secondary_text = "#FFFFFF"  # White text
+                danger_bg = "#D4A5A5"       # Soft dusty rose
+                danger_text = "#FFFFFF"     # White text
+                border_color = "#CCCCCC"    # Light gray border
+
+            # Common button style template
+            button_style_template = """
+                QPushButton {{
+                    background-color: {bg_color};
+                    color: {text_color};
+                    border: 1px solid {border_color};
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    font-weight: bold;
+                    min-height: 24px;
+                }}
+                QPushButton:hover {{
+                    background-color: {hover_bg};
+                    border: 1px solid {hover_border};
+                }}
+                QPushButton:pressed {{
+                    background-color: {pressed_bg};
+                }}
+                QPushButton:disabled {{
+                    background-color: #CCCCCC;
+                    color: #666666;
+                    border: 1px solid #BBBBBB;
+                }}
+            """
+
+            # Calculate hover and pressed colors
+            def adjust_color_brightness(color_hex, factor):
+                """Adjust color brightness by factor (0.0 = black, 1.0 = original, 2.0 = white)."""
+                color = QColor(color_hex)
+                h, s, l, a = color.getHsl()
+                l = min(255, int(l * factor))
+                color.setHsl(h, s, l, a)
+                return color.name()
+
+            # Style for primary buttons (Login/Logout, Fetch buttons)
+            primary_style = button_style_template.format(
+                bg_color=primary_bg,
+                text_color=primary_text,
+                border_color=border_color,
+                hover_bg=adjust_color_brightness(primary_bg, 1.2),
+                hover_border=adjust_color_brightness(border_color, 1.3),
+                pressed_bg=adjust_color_brightness(primary_bg, 0.8)
+            )
+
+            # Style for secondary buttons (Import to QGIS)
+            secondary_style = button_style_template.format(
+                bg_color=secondary_bg,
+                text_color=secondary_text,
+                border_color=border_color,
+                hover_bg=adjust_color_brightness(secondary_bg, 1.2),
+                hover_border=adjust_color_brightness(border_color, 1.3),
+                pressed_bg=adjust_color_brightness(secondary_bg, 0.8)
+            )
+
+            # Style for danger buttons (Reset All, Cancel)
+            danger_style = button_style_template.format(
+                bg_color=danger_bg,
+                text_color=danger_text,
+                border_color=border_color,
+                hover_bg=adjust_color_brightness(danger_bg, 1.2),
+                hover_border=adjust_color_brightness(border_color, 1.3),
+                pressed_bg=adjust_color_brightness(danger_bg, 0.8)
+            )
+
+            # Apply styles to buttons
+            # Header buttons
+            self.login_button.setStyleSheet(primary_style)
+            self.reset_all_button.setStyleSheet(danger_style)
+
+            # Fetch buttons
+            self.holes_tab['fetch_button'].setStyleSheet(primary_style)
+            self.assays_tab['fetch_button'].setStyleSheet(primary_style)
+
+            # Import buttons
+            self.holes_tab['import_button'].setStyleSheet(secondary_style)
+            self.assays_tab['import_button'].setStyleSheet(secondary_style)
+
+            # Location import buttons (override the existing hardcoded style)
+            self.holes_tab['location_import_button'].setStyleSheet(secondary_style)
+            self.assays_tab['location_import_button'].setStyleSheet(secondary_style)
+
+            # Cancel button (already has some styling, but make it theme-aware)
+            self.cancel_button.setStyleSheet(danger_style + """
+                QPushButton {
+                    font-size: 12px;
+                    padding: 4px 8px;
+                    min-height: 20px;
+                }
+            """)
+
+            logger.info(f"Applied theme-aware button styling (dark_theme: {is_dark_theme})")
+
+        except Exception as e:
+            logger.warning(f"Failed to apply theme-aware styling: {e}")
+            # Fallback to basic styling that should work in any theme
+            basic_style = """
+                QPushButton {
+                    background-color: #8DB5A2;
+                    color: white;
+                    border: 1px solid #7AA394;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    font-weight: bold;
+                    min-height: 24px;
+                }
+                QPushButton:hover {
+                    background-color: #7AA394;
+                }
+                QPushButton:pressed {
+                    background-color: #6B9486;
+                }
+            """
+
+            # Apply basic style to all buttons as fallback
+            for button in [self.login_button, self.reset_all_button,
+                          self.holes_tab['fetch_button'], self.assays_tab['fetch_button'],
+                          self.holes_tab['import_button'], self.assays_tab['import_button'],
+                          self.holes_tab['location_import_button'], self.assays_tab['location_import_button'],
+                          self.cancel_button]:
+                button.setStyleSheet(basic_style)
 
     def _setup_window_geometry(self):
         """Setup window size to 75% width and full height, centered to QGIS."""
