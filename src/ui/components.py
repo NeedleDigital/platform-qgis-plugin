@@ -17,7 +17,6 @@ from ..config.constants import (
     MAX_SAFE_IMPORT_LOCATION_ONLY, PARTIAL_IMPORT_LIMIT_LOCATION_ONLY
 )
 
-logger = get_logger(__name__)
 
 class FlowLayout(QLayout):
     """A custom layout that arranges widgets in a flowing manner."""

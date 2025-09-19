@@ -641,8 +641,7 @@ class DataManager(QObject):
         self.api_client.make_api_request(
             API_ENDPOINTS['hole_types'],
             {},  # No parameters needed for hole types API
-            self._handle_hole_types_response,
-            self._handle_hole_types_error  # Custom error handler to suppress popups
+            self._handle_hole_types_response
         )
 
     def _handle_hole_types_response(self, response_data) -> None:
