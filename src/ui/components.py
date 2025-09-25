@@ -379,6 +379,11 @@ class StaticFilterWidget(QWidget):
     def addItems(self, items):
         """Add items to the combo box."""
         self.combo_box.addItems(items)
+
+    def updateItems(self, items):
+        """Clear existing items and add new items to the combo box."""
+        self.combo_box.clear()
+        self.combo_box.addItems(items)
     
     def currentData(self):
         """Return the current selection."""
