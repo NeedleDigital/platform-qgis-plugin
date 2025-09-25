@@ -6,10 +6,10 @@ Contains reusable widgets and layouts for the plugin interface.
 from qgis.PyQt.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QLayout, QComboBox,
     QListView, QDialog, QLineEdit, QFormLayout, QDialogButtonBox, QMessageBox,
-    QColorDialog, QProgressDialog
+    QColorDialog, QProgressDialog, QScrollArea
 )
 from qgis.PyQt.QtGui import QFont, QColor, QStandardItemModel, QStandardItem
-from qgis.PyQt.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize
+from qgis.PyQt.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize, QEvent
 
 from ..utils.logging import log_info, log_error, log_warning, log_debug
 from ..config.constants import (
@@ -96,56 +96,162 @@ class FlowLayout(QLayout):
 
 class Chip(QWidget):
     """A widget representing a single selected item, with a close button."""
-    
+
     removed = pyqtSignal(object)
 
     def __init__(self, text, data, parent=None):
         super().__init__(parent)
         self.data = data
         self.text = text
-        
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(5, 2, 2, 2)
         layout.setSpacing(4)
-        
+
         self.label = QLabel(text, self)
-        
+
         self.close_button = QPushButton("×", self)
         self.close_button.setFixedSize(16, 16)
         self.close_button.setDefault(False)
         self.close_button.setAutoDefault(False)
         self.close_button.setStyleSheet("""
             QPushButton {
-                font-family: "Arial", sans-serif; 
-                font-weight: bold; 
+                font-family: "Arial", sans-serif;
+                font-weight: bold;
                 border-radius: 8px;
-                border: 1px solid #ccc; 
+                border: 1px solid #ccc;
                 background-color: #f0f0f0;
                 font-size: 12px;
             }
-            QPushButton:hover { 
-                background-color: #e0e0e0; 
+            QPushButton:hover {
+                background-color: #e0e0e0;
             }
-            QPushButton:pressed { 
-                background-color: #d0d0d0; 
+            QPushButton:pressed {
+                background-color: #d0d0d0;
             }
         """)
         self.close_button.clicked.connect(self._emit_removed_signal)
-        
+
         layout.addWidget(self.label)
         layout.addWidget(self.close_button)
-        
+
         self.setStyleSheet("""
-            Chip { 
-                background-color: #e1e1e1; 
-                border-radius: 8px; 
-                border: 1px solid #c0c0c0; 
+            Chip {
+                background-color: #e1e1e1;
+                border-radius: 8px;
+                border: 1px solid #c0c0c0;
             }
         """)
 
     def _emit_removed_signal(self):
         """Emit the removed signal with this chip's data."""
         self.removed.emit(self.data)
+
+class ViewAllChip(QWidget):
+    """A chip-like widget that looks like a chip but shows 'view all' functionality."""
+
+    clicked = pyqtSignal()
+
+    def __init__(self, text, parent=None):
+        super().__init__(parent)
+        self.text = text
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 2, 5, 2)
+        layout.setSpacing(4)
+
+        self.label = QLabel(text, self)
+        layout.addWidget(self.label)
+
+        self.setStyleSheet("""
+            ViewAllChip {
+                background-color: #d1e7ff;
+                border-radius: 8px;
+                border: 1px solid #4dabf7;
+            }
+            ViewAllChip:hover {
+                background-color: #a8d8ff;
+                cursor: pointer;
+            }
+        """)
+
+    def mousePressEvent(self, event):
+        """Handle mouse press to emit clicked signal."""
+        if event.button() == Qt.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+class AllSelectedItemsDialog(QDialog):
+    """Dialog to show all selected items in a scrollable view."""
+
+    item_removed = pyqtSignal(object)
+
+    def __init__(self, selected_items, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("All Selected Companies")
+        self.setModal(True)
+        self.setMinimumSize(400, 300)
+        self.selected_items = selected_items.copy()  # Make a copy to avoid modifying original
+
+        self.setupUI()
+
+    def setupUI(self):
+        layout = QVBoxLayout(self)
+
+        # Title
+        title_label = QLabel(f"Selected Companies ({len(self.selected_items)})")
+        title_font = QFont()
+        title_font.setPointSize(12)
+        title_font.setBold(True)
+        title_label.setFont(title_font)
+        layout.addWidget(title_label)
+
+        # Scroll area for chips
+        scroll_area = QScrollArea(self)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+
+        # Container widget for chips
+        container_widget = QWidget()
+        self.container_layout = FlowLayout(container_widget, spacing=4)
+        scroll_area.setWidget(container_widget)
+
+        layout.addWidget(scroll_area)
+
+        # Update chips display
+        self.update_chips_display()
+
+        # Close button
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok)
+        button_box.accepted.connect(self.accept)
+        layout.addWidget(button_box)
+
+    def update_chips_display(self):
+        """Update the chip display in the dialog."""
+        # Clear existing chips
+        while self.container_layout.count():
+            child = self.container_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        # Add chips for all selected items
+        for data, text in self.selected_items.items():
+            chip = Chip(text, data)
+            chip.removed.connect(self.on_chip_removed)
+            self.container_layout.addWidget(chip)
+
+    def on_chip_removed(self, data):
+        """Handle chip removal from the dialog."""
+        if data in self.selected_items:
+            del self.selected_items[data]
+            self.item_removed.emit(data)
+            self.update_chips_display()
+
+            # Update title
+            title_label = self.findChild(QLabel)
+            if title_label:
+                title_label.setText(f"Selected Companies ({len(self.selected_items)})")
 
 class CheckableComboBox(QComboBox):
     """A combo box that allows multiple selections with checkboxes."""
@@ -291,8 +397,15 @@ class DynamicSearchFilterWidget(QWidget):
         self.results_list = QListView(self.popup)
         self.results_list.setModel(QStandardItemModel(self.results_list))
         self.results_list.clicked.connect(self.onResultClicked)
+        # Prevent the list from taking keyboard focus
+        self.results_list.setFocusPolicy(Qt.NoFocus)
         self.popup_layout.addWidget(self.results_list)
         self.popup.setMinimumWidth(300)
+        # Prevent the popup dialog from taking keyboard focus
+        self.popup.setFocusPolicy(Qt.NoFocus)
+        # Install event filter on the popup to redirect keyboard events
+        self.popup.installEventFilter(self)
+        self.results_list.installEventFilter(self)
 
     def onResultClicked(self, index):
         """Handle result click to add selected item."""
@@ -301,6 +414,8 @@ class DynamicSearchFilterWidget(QWidget):
             self.addItem(item.text(), item.data(Qt.UserRole))
         self.popup.hide()
         self.search_box.clear()
+        # Restore focus to search box after selection
+        self.search_box.setFocus()
 
     def showPopup(self, results):
         """Show popup with search results."""
@@ -313,6 +428,14 @@ class DynamicSearchFilterWidget(QWidget):
             point = self.mapToGlobal(self.search_box.geometry().bottomLeft())
             self.popup.move(point)
             self.popup.show()
+            # Ensure search box maintains focus after popup is shown
+            self.search_box.setFocus()
+            # Force focus to stay on the search box by raising it
+            self.search_box.raise_()
+            # Process events to ensure focus is properly set
+            from qgis.PyQt.QtWidgets import QApplication
+            QApplication.processEvents()
+            self.search_box.setFocus()  # Set focus again to be sure
         else:
             self.popup.hide()
 
@@ -331,18 +454,39 @@ class DynamicSearchFilterWidget(QWidget):
             self.selectionChanged.emit(self.currentData())
 
     def _updateChips(self):
-        """Update the chip display."""
+        """Update the chip display with 4+ item limitation."""
+        # Clear existing chips
         while self.chip_layout.count():
             child = self.chip_layout.takeAt(0)
             if child.widget():
                 child.widget().deleteLater()
+
         if not self._selected_items:
             self.chip_container.setVisible(False)
             return
-        for data, text in self._selected_items.items():
-            chip = Chip(text, data)
-            chip.removed.connect(self.removeChip)
-            self.chip_layout.addWidget(chip)
+
+        selected_items_list = list(self._selected_items.items())
+        total_items = len(selected_items_list)
+
+        if total_items <= 4:
+            # Show all chips if 4 or fewer
+            for data, text in selected_items_list:
+                chip = Chip(text, data)
+                chip.removed.connect(self.removeChip)
+                self.chip_layout.addWidget(chip)
+        else:
+            # Show first 4 chips + "view all" button
+            for data, text in selected_items_list[:4]:
+                chip = Chip(text, data)
+                chip.removed.connect(self.removeChip)
+                self.chip_layout.addWidget(chip)
+
+            # Add "view all" chip-like button
+            remaining_count = total_items - 4
+            view_all_chip = ViewAllChip(f"+ {remaining_count} more")
+            view_all_chip.clicked.connect(self.show_all_items_dialog)
+            self.chip_layout.addWidget(view_all_chip)
+
         self.chip_container.setVisible(True)
 
     def currentData(self):
@@ -353,6 +497,29 @@ class DynamicSearchFilterWidget(QWidget):
         """Set the current selection by data values."""
         self._selected_items = {item: item for item in data_list}
         self._updateChips()
+
+    def eventFilter(self, obj, event):
+        """Event filter to redirect keyboard events from popup to search box."""
+        if obj == self.popup or obj == self.results_list:
+            if event.type() == QEvent.KeyPress:
+                # Redirect key press events to the search box
+                if self.search_box.isVisible() and self.search_box.isEnabled():
+                    # Send the key event to the search box
+                    from qgis.PyQt.QtWidgets import QApplication
+                    QApplication.sendEvent(self.search_box, event)
+                    return True  # Event handled
+        return super().eventFilter(obj, event)
+
+    def show_all_items_dialog(self):
+        """Show dialog with all selected items."""
+        dialog = AllSelectedItemsDialog(self._selected_items, self)
+        dialog.item_removed.connect(self.removeChip)
+        if dialog.exec_() == QDialog.Accepted:
+            # Update the main widget's selected items from the dialog
+            # in case items were removed in the dialog
+            self._selected_items = dialog.selected_items.copy()
+            self._updateChips()
+            self.selectionChanged.emit(self.currentData())
 
 class StaticFilterWidget(QWidget):
     """A composite widget that combines a CheckableComboBox with a chip container."""
