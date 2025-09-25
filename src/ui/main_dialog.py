@@ -35,14 +35,14 @@ from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QTabWidget, QTableWidget, QTableWidgetItem, QProgressBar, QWidget,
     QFormLayout, QSpacerItem, QSizePolicy, QHeaderView, QMessageBox,
-    QStackedLayout, QComboBox, QCheckBox, QApplication
+    QStackedLayout, QComboBox, QCheckBox, QApplication, QFrame
 )
 from qgis.PyQt.QtGui import QFont, QCursor, QDoubleValidator, QColor
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer
 
 from .components import (
     DynamicSearchFilterWidget, StaticFilterWidget, SearchableStaticFilterWidget,
-    LoginDialog, LayerOptionsDialog, LargeImportWarningDialog, ImportProgressDialog
+    LoginDialog, LayerOptionsDialog, LargeImportWarningDialog, ImportProgressDialog, MessageBar
 )
 from ..config.constants import (
     AUSTRALIAN_STATES, CHEMICAL_ELEMENTS, COMPARISON_OPERATORS, UI_CONFIG,
@@ -102,13 +102,24 @@ class DataImporterDialog(QDialog):
         self._setup_window_geometry()
 
         self.main_layout = QVBoxLayout(self)
-        
+
         # Header
         self._create_header()
-        
+
+        # Message bar (initially hidden) - with error handling
+        try:
+            self.message_bar = MessageBar(self)
+            self.main_layout.addWidget(self.message_bar)
+        except Exception as e:
+            # If MessageBar fails to create, create a fallback QLabel
+            self.message_bar = QLabel("")
+            self.message_bar.setVisible(False)
+            self.message_bar.setStyleSheet("background-color: #2196F3; color: white; padding: 8px; border-radius: 4px;")
+            self.main_layout.addWidget(self.message_bar)
+
         # Tabs
         self._create_tabs()
-        
+
         # Status bar
         self._create_status_bar()
     
@@ -424,7 +435,10 @@ class DataImporterDialog(QDialog):
         
         # Data table
         table = QTableWidget()
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        # Make columns resizable - users can adjust width by dragging column borders
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        # Set minimum column width for better usability
+        table.horizontalHeader().setMinimumSectionSize(50)
         # Make table read-only
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         
@@ -851,18 +865,47 @@ class DataImporterDialog(QDialog):
             end_idx = min(start_idx + records_per_page, len(data))
             page_data = data[start_idx:end_idx]
             
-            # Simple table display - no complex error handling to avoid crashes
+            # Enhanced table display with better UX
             table.setRowCount(len(page_data))
             table.setColumnCount(len(headers))
             table.setHorizontalHeaderLabels(headers)
 
-            # Simple population
+            # Enhanced population with N/A for nulls and tooltips
             for row_idx, record in enumerate(page_data):
                 for col_idx, header in enumerate(headers):
                     value = record.get(header, '')
-                    value_str = str(value) if value is not None else ''
-                    item = QTableWidgetItem(value_str)
+
+                    # Handle null/empty values
+                    if value is None or value == '' or (isinstance(value, str) and value.strip() == ''):
+                        display_value = 'N/A'
+                        tooltip_value = 'No data available'
+                        item = QTableWidgetItem(display_value)
+                        # Style N/A cells with italics and muted color
+                        font = item.font()
+                        font.setItalic(True)
+                        item.setFont(font)
+                        # Set a muted text color for N/A values
+                        item.setForeground(QColor(128, 128, 128))  # Gray color
+                    else:
+                        display_value = str(value)
+                        tooltip_value = str(value)
+                        item = QTableWidgetItem(display_value)
+
+                    # Set tooltip to show the cell value on hover
+                    item.setToolTip(f"{header}: {tooltip_value}")
                     table.setItem(row_idx, col_idx, item)
+
+            # Auto-resize columns to fit content initially, but keep them user-resizable
+            table.resizeColumnsToContents()
+
+            # Ensure no column is too narrow or too wide
+            for col in range(table.columnCount()):
+                width = table.columnWidth(col)
+                # Set minimum width of 80px and maximum of 300px for better readability
+                if width < 80:
+                    table.setColumnWidth(col, 80)
+                elif width > 300:
+                    table.setColumnWidth(col, 300)
 
             content_stack.setCurrentWidget(table)
             import_button.setVisible(True)
@@ -912,6 +955,21 @@ class DataImporterDialog(QDialog):
     def show_info(self, message: str):
         """Show information message."""
         QMessageBox.information(self, "Information", message)
+
+    def show_plugin_message(self, message: str, message_type: str = "info", duration: int = 3000):
+        """Show a message in the plugin's message bar."""
+        try:
+            if hasattr(self.message_bar, 'show_message'):
+                self.message_bar.show_message(message, message_type, duration)
+            else:
+                # Fallback for QLabel
+                self.message_bar.setText(f"[{message_type.upper()}] {message}")
+                self.message_bar.setVisible(True)
+                # Create a timer to hide the fallback message
+                QTimer.singleShot(duration, lambda: self.message_bar.setVisible(False))
+        except Exception as e:
+            # If all else fails, just log the message
+            print(f"Failed to show plugin message: {message} (Error: {e})")
 
     def show_ppm_info(self):
         """Show information about supported measurement units."""

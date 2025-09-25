@@ -6,10 +6,10 @@ Contains reusable widgets and layouts for the plugin interface.
 from qgis.PyQt.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QLayout, QComboBox,
     QListView, QDialog, QLineEdit, QFormLayout, QDialogButtonBox, QMessageBox,
-    QColorDialog, QProgressDialog, QScrollArea
+    QColorDialog, QProgressDialog, QScrollArea, QFrame
 )
 from qgis.PyQt.QtGui import QFont, QColor, QStandardItemModel, QStandardItem
-from qgis.PyQt.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize, QEvent
+from qgis.PyQt.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize, QEvent, QTimer
 
 from ..utils.logging import log_info, log_error, log_warning, log_debug
 from ..config.constants import (
@@ -180,6 +180,79 @@ class ViewAllChip(QWidget):
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
+
+class MessageBar(QWidget):
+    """A message bar widget that shows messages with different types (info, success, warning, error)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setVisible(False)  # Hidden by default
+        try:
+            self.hide_timer = QTimer()
+            self.hide_timer.setSingleShot(True)
+            self.hide_timer.timeout.connect(self.hide_message)
+            self.setupUI()
+        except Exception as e:
+            # If there's an error setting up MessageBar, just create a basic QLabel as fallback
+            layout = QHBoxLayout(self)
+            self.message_label = QLabel("MessageBar initialization failed")
+            layout.addWidget(self.message_label)
+
+    def setupUI(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(8)
+
+        # Message text
+        self.message_label = QLabel()
+        self.message_label.setWordWrap(True)
+        layout.addWidget(self.message_label)
+
+        # Close button
+        self.close_button = QPushButton("×")
+        self.close_button.setFixedSize(20, 20)
+        self.close_button.clicked.connect(self.hide_message)
+        layout.addWidget(self.close_button)
+
+    def show_message(self, message, message_type="info", duration=3000):
+        """Show a message with specified type and duration."""
+        try:
+            if hasattr(self, 'message_label'):
+                self.message_label.setText(f"[{message_type.upper()}] {message}")
+            else:
+                # Fallback if setupUI failed
+                return
+
+            # Simple styling based on message type
+            if message_type.lower() == "success":
+                self.setStyleSheet("background-color: #4CAF50; color: white; padding: 8px; border-radius: 4px;")
+            elif message_type.lower() == "error" or message_type.lower() == "critical":
+                self.setStyleSheet("background-color: #f44336; color: white; padding: 8px; border-radius: 4px;")
+            elif message_type.lower() == "warning":
+                self.setStyleSheet("background-color: #FF9800; color: white; padding: 8px; border-radius: 4px;")
+            else:  # info
+                self.setStyleSheet("background-color: #2196F3; color: white; padding: 8px; border-radius: 4px;")
+
+            self.setVisible(True)
+
+            # Set timer to auto-hide after duration
+            if duration > 0 and hasattr(self, 'hide_timer'):
+                self.hide_timer.start(duration)
+        except Exception as e:
+            # If there's any error, just show the message without styling
+            if hasattr(self, 'message_label'):
+                self.message_label.setText(message)
+                self.setVisible(True)
+
+    def hide_message(self):
+        """Hide the message bar."""
+        try:
+            if hasattr(self, 'hide_timer'):
+                self.hide_timer.stop()
+            self.setVisible(False)
+        except Exception as e:
+            # If there's an error, at least try to hide the widget
+            self.setVisible(False)
 
 class AllSelectedItemsDialog(QDialog):
     """Dialog to show all selected items in a scrollable view."""

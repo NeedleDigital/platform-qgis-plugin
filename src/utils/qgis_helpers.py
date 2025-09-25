@@ -364,11 +364,23 @@ class QGISLayerManager:
             except Exception as fallback_error:
                 log_error(f"Fallback zoom also failed: {fallback_error}")
     
-    def show_message(self, message: str, level: Qgis.MessageLevel = Qgis.Info, 
-                    duration: int = 3) -> None:
-        """Show message in QGIS interface."""
+    def show_message(self, message: str, level: Qgis.MessageLevel = Qgis.Info,
+                    duration: int = 3, plugin_dialog=None) -> None:
+        """Show message in plugin dialog or QGIS interface."""
         try:
-            if self.iface:
+            # Convert QGIS message level to plugin message type
+            message_type = "info"
+            if level == Qgis.Success:
+                message_type = "success"
+            elif level == Qgis.Warning:
+                message_type = "warning"
+            elif level == Qgis.Critical:
+                message_type = "error"
+
+            # Prefer plugin dialog message if available
+            if plugin_dialog and hasattr(plugin_dialog, 'show_plugin_message'):
+                plugin_dialog.show_plugin_message(message, message_type, duration * 1000)  # Convert seconds to milliseconds
+            elif self.iface:
                 self.iface.messageBar().pushMessage("Needle Digital", message, level, duration)
             else:
                 # Fallback to message log

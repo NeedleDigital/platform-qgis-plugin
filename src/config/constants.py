@@ -156,8 +156,8 @@ UI_CONFIG = {
 # Validation messages
 VALIDATION_MESSAGES = {
     'auth_required': 'You must be logged in to fetch data.',
-    'fetch_all_no_state': 'Currenlty our plugin support fetching all data state-wise. Please select 1 state for which you want all data.',
-    'fetch_all_multiple_states': 'Currenlty our plugin support fetching all data state-wise. Please select 1 state for which you want all data.',
+    'fetch_all_no_state': 'Currenlty our plugin support fetching all data state-wise, due to memory issue of QGIS. Please select 1 state for which you want to fetch all data.\n\nNote - If you want all records for mutiple states you can enable - Fetch Location Only checkbox',
+    'fetch_all_multiple_states': 'Currenlty our plugin support fetching all data state-wise, due to memory issue of QGIS. Please select 1 state for which you want to fetch all data.\n\nNote - If you want all records for mutiple states you can enable - Fetch Location Only checkbox',
     'invalid_credentials': 'A valid email and password are required.',
     'network_error': 'Network error occurred. Please check your connection and try again.',
     'api_error': 'API request failed. Please try again later.',

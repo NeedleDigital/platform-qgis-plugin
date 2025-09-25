@@ -180,10 +180,9 @@ class DataImporter:
         except Exception as e:
             error_msg = f"Failed to open plugin: {str(e)}"
             log_error(error_msg)
-            if self.iface:
-                self.iface.messageBar().pushMessage(
-                    "Error", error_msg, level=Qgis.Critical, duration=5
-                )
+            # Show error message in plugin dialog if available
+            if self.dlg:
+                self.dlg.show_plugin_message(error_msg, "error", 5000)
 
     def _initialize_components(self):
         """Initialize plugin components."""
@@ -265,11 +264,9 @@ class DataImporter:
             self.dlg.show_data("Holes", [], [], {'has_data': False, 'current_page': 0, 'total_pages': 0, 'showing_records': 0, 'total_records': 0, 'records_per_page': 100})
             self.dlg.show_data("Assays", [], [], {'has_data': False, 'current_page': 0, 'total_pages': 0, 'showing_records': 0, 'total_records': 0, 'records_per_page': 100})
             
-            if self.iface:
-                self.iface.messageBar().pushMessage(
-                    "Needle Digital", "Logged out successfully", 
-                    level=Qgis.Info, duration=3
-                )
+            # Show logout success message in plugin dialog
+            if self.dlg:
+                self.dlg.show_plugin_message("Logged out successfully", "info", 3000)
             
             
         except Exception as e:
@@ -306,11 +303,9 @@ class DataImporter:
             
             self.dlg.update_login_status(True)
             
-            if self.iface:
-                self.iface.messageBar().pushMessage(
-                    "Success", "Login successful!",
-                    level=Qgis.Success, duration=3
-                )
+            # Show login success message in plugin dialog
+            if self.dlg:
+                self.dlg.show_plugin_message("Login successful!", "success", 3000)
 
 
             
@@ -482,12 +477,11 @@ class DataImporter:
         if success:
             # Only show popup dialog if no warning dialog was shown
             # (progress dialog already shows success message when warning dialog was used)
-            if not warning_dialog_shown:
-                self.dlg.show_info(message)
-            if self.iface:
-                self.iface.messageBar().pushMessage(
-                    "Success", message, level=Qgis.Success, duration=5
-                )
+            # if not warning_dialog_shown:
+            #     self.dlg.show_info(message)
+            # Show import success message in plugin dialog
+            if self.dlg:
+                self.dlg.show_plugin_message(message, "success", 5000)
         else:
             self.dlg.show_error(message)
     
