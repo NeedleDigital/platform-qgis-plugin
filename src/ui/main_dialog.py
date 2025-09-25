@@ -41,8 +41,8 @@ from qgis.PyQt.QtGui import QFont, QCursor, QDoubleValidator, QColor
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer
 
 from .components import (
-    DynamicSearchFilterWidget, StaticFilterWidget, LoginDialog, LayerOptionsDialog,
-    LargeImportWarningDialog, ImportProgressDialog
+    DynamicSearchFilterWidget, StaticFilterWidget, SearchableStaticFilterWidget,
+    LoginDialog, LayerOptionsDialog, LargeImportWarningDialog, ImportProgressDialog
 )
 from ..config.constants import (
     AUSTRALIAN_STATES, CHEMICAL_ELEMENTS, COMPARISON_OPERATORS, UI_CONFIG,
@@ -174,15 +174,11 @@ class DataImporterDialog(QDialog):
         controls_layout.addRow("State(s):", state_filter)
 
         # Hole Type filter (will be positioned differently for each tab)
-        hole_type_filter = StaticFilterWidget()
-        # Add "All" as the first option (default)
-        hole_type_items = [("All Hole Types", "")]  # Display name, value
-        # Add default hole types as options
-        for hole_type in DEFAULT_HOLE_TYPES:
-            hole_type_items.append((hole_type, hole_type))
-        hole_type_filter.addItems(hole_type_items)
-        # Set "All" as default (first item, empty value)
-        hole_type_filter.setCurrentData([""])
+        hole_type_filter = SearchableStaticFilterWidget()
+        hole_type_filter.search_box.setPlaceholderText("Type to search hole types...")
+        # Set static data for searching (exclude "All" from search since it's not a real hole type)
+        hole_type_data = [(hole_type, hole_type) for hole_type in DEFAULT_HOLE_TYPES]
+        hole_type_filter.setStaticData(hole_type_data)
 
         widgets = {
             'widget': tab_widget,
@@ -1102,8 +1098,9 @@ class DataImporterDialog(QDialog):
         # Reset state filter to "All States" (first item, empty value)
         holes_tab['state_filter'].setCurrentData([""])
 
-        # Reset hole type filter to "All Hole Types" (first item, empty value)
-        holes_tab['hole_type_filter'].setCurrentData([""])
+        # Reset hole type filter - clear all selections and search box
+        holes_tab['hole_type_filter'].setCurrentData([])
+        holes_tab['hole_type_filter'].search_box.clear()
         
         # Reset company filter
         holes_tab['company_filter'].setCurrentData([])
@@ -1125,8 +1122,9 @@ class DataImporterDialog(QDialog):
         # Reset state filter to "All States" (first item, empty value)
         assays_tab['state_filter'].setCurrentData([""])
 
-        # Reset hole type filter to "All Hole Types" (first item, empty value)
-        assays_tab['hole_type_filter'].setCurrentData([""])
+        # Reset hole type filter - clear all selections and search box
+        assays_tab['hole_type_filter'].setCurrentData([])
+        assays_tab['hole_type_filter'].search_box.clear()
         
         # Reset element to first item (index 0)
         assays_tab['element_input'].setCurrentIndex(0)
@@ -1175,23 +1173,6 @@ class DataImporterDialog(QDialog):
             if hasattr(self.assays_tab['company_filter'], 'showPopup'):
                 self.assays_tab['company_filter'].showPopup(results)
 
-    def handle_hole_types_results(self, hole_types: list):
-        """Handle hole types results from the API."""
-        # Update both hole type filters (Holes and Assays)
-        hole_type_items = [("All Hole Types", "")]  # Default "All" option
-
-        # Add the fetched hole types
-        for hole_type in hole_types:
-            if isinstance(hole_type, str) and hole_type.strip():
-                hole_type_items.append((hole_type, hole_type))
-
-        # Update both filters with the new items
-        self.holes_tab['hole_type_filter'].updateItems(hole_type_items)
-        self.assays_tab['hole_type_filter'].updateItems(hole_type_items)
-
-        # Reset both to "All" after updating
-        self.holes_tab['hole_type_filter'].setCurrentData([""])
-        self.assays_tab['hole_type_filter'].setCurrentData([""])
 
     def _apply_theme_aware_styling(self):
         """Apply theme-aware styling to buttons for visibility in both light and dark themes."""

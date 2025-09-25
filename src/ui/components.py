@@ -412,9 +412,15 @@ class DynamicSearchFilterWidget(QWidget):
         item = self.results_list.model().itemFromIndex(index)
         if item:
             self.addItem(item.text(), item.data(Qt.UserRole))
-        self.popup.hide()
-        self.search_box.clear()
-        # Restore focus to search box after selection
+            # Remove the selected item from the current results to avoid re-selection
+            self.results_list.model().removeRow(index.row())
+
+            # Keep popup open if there are still results, close if empty
+            if self.results_list.model().rowCount() == 0:
+                self.popup.hide()
+                self.search_box.clear()
+
+        # Always restore focus to search box after selection
         self.search_box.setFocus()
 
     def showPopup(self, results):
@@ -502,6 +508,206 @@ class DynamicSearchFilterWidget(QWidget):
         """Event filter to redirect keyboard events from popup to search box."""
         if obj == self.popup or obj == self.results_list:
             if event.type() == QEvent.KeyPress:
+                # Handle Escape key to close popup
+                if event.key() == Qt.Key_Escape:
+                    self.popup.hide()
+                    self.search_box.clear()
+                    self.search_box.setFocus()
+                    return True
+
+                # Redirect key press events to the search box
+                if self.search_box.isVisible() and self.search_box.isEnabled():
+                    # Send the key event to the search box
+                    from qgis.PyQt.QtWidgets import QApplication
+                    QApplication.sendEvent(self.search_box, event)
+                    return True  # Event handled
+        return super().eventFilter(obj, event)
+
+    def show_all_items_dialog(self):
+        """Show dialog with all selected items."""
+        dialog = AllSelectedItemsDialog(self._selected_items, self)
+        dialog.item_removed.connect(self.removeChip)
+        if dialog.exec_() == QDialog.Accepted:
+            # Update the main widget's selected items from the dialog
+            # in case items were removed in the dialog
+            self._selected_items = dialog.selected_items.copy()
+            self._updateChips()
+            self.selectionChanged.emit(self.currentData())
+
+class SearchableStaticFilterWidget(QWidget):
+    """A widget for searchable static data with chip display (no API calls)."""
+
+    selectionChanged = pyqtSignal(list)
+
+    def __init__(self, static_data=None, parent=None):
+        super().__init__(parent)
+        self._selected_items = {}
+        self._static_data = static_data or []  # List of strings or tuples (display, value)
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(4)
+
+        self.search_box = QLineEdit(self)
+        self.search_box.setPlaceholderText("Type to search...")
+        self.search_box.textChanged.connect(self._on_search_text_changed)
+        main_layout.addWidget(self.search_box)
+
+        self.chip_container = QWidget(self)
+        self.chip_layout = FlowLayout(self.chip_container, spacing=4)
+        self.chip_container.setVisible(False)
+        main_layout.addWidget(self.chip_container)
+
+        self.popup = QDialog(self, Qt.Popup)
+        self.popup_layout = QVBoxLayout(self.popup)
+        self.results_list = QListView(self.popup)
+        self.results_list.setModel(QStandardItemModel(self.results_list))
+        self.results_list.clicked.connect(self.onResultClicked)
+        # Prevent the list from taking keyboard focus
+        self.results_list.setFocusPolicy(Qt.NoFocus)
+        self.popup_layout.addWidget(self.results_list)
+        self.popup.setMinimumWidth(300)
+        # Prevent the popup dialog from taking keyboard focus
+        self.popup.setFocusPolicy(Qt.NoFocus)
+        # Install event filter on the popup to redirect keyboard events
+        self.popup.installEventFilter(self)
+        self.results_list.installEventFilter(self)
+
+    def setStaticData(self, data):
+        """Set the static data for searching."""
+        self._static_data = data
+
+    def _on_search_text_changed(self, text):
+        """Handle search text changes and show filtered results."""
+        query = text.strip().lower()
+        if not query:
+            self.popup.hide()
+            return
+
+        # Filter static data based on query
+        filtered_results = []
+        for item in self._static_data:
+            if isinstance(item, tuple):
+                display_text, value = item
+                if query in display_text.lower() or query in value.lower():
+                    filtered_results.append((display_text, value))
+            elif isinstance(item, str):
+                if query in item.lower():
+                    filtered_results.append((item, item))
+
+        if filtered_results:
+            self.showPopup(filtered_results)
+        else:
+            self.popup.hide()
+
+    def showPopup(self, results):
+        """Show popup with search results."""
+        self.results_list.model().clear()
+        for text, data in results:
+            item = QStandardItem(text)
+            item.setData(data, Qt.UserRole)
+            self.results_list.model().appendRow(item)
+        if self.results_list.model().rowCount() > 0:
+            point = self.mapToGlobal(self.search_box.geometry().bottomLeft())
+            self.popup.move(point)
+            self.popup.show()
+            # Ensure search box maintains focus after popup is shown
+            self.search_box.setFocus()
+            # Force focus to stay on the search box by raising it
+            self.search_box.raise_()
+            # Process events to ensure focus is properly set
+            from qgis.PyQt.QtWidgets import QApplication
+            QApplication.processEvents()
+            self.search_box.setFocus()  # Set focus again to be sure
+        else:
+            self.popup.hide()
+
+    def onResultClicked(self, index):
+        """Handle result click to add selected item."""
+        item = self.results_list.model().itemFromIndex(index)
+        if item:
+            self.addItem(item.text(), item.data(Qt.UserRole))
+            # Remove the selected item from the current results to avoid re-selection
+            self.results_list.model().removeRow(index.row())
+
+            # Keep popup open if there are still results, close if empty
+            if self.results_list.model().rowCount() == 0:
+                self.popup.hide()
+                self.search_box.clear()
+
+        # Always restore focus to search box after selection
+        self.search_box.setFocus()
+
+    def addItem(self, text, data):
+        """Add an item to the selection."""
+        if data not in self._selected_items:
+            self._selected_items[data] = text
+            self._updateChips()
+            self.selectionChanged.emit(self.currentData())
+
+    def removeChip(self, data_to_remove):
+        """Remove a chip from the selection."""
+        if data_to_remove in self._selected_items:
+            del self._selected_items[data_to_remove]
+            self._updateChips()
+            self.selectionChanged.emit(self.currentData())
+
+    def _updateChips(self):
+        """Update the chip display with 4+ item limitation."""
+        # Clear existing chips
+        while self.chip_layout.count():
+            child = self.chip_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        if not self._selected_items:
+            self.chip_container.setVisible(False)
+            return
+
+        selected_items_list = list(self._selected_items.items())
+        total_items = len(selected_items_list)
+
+        if total_items <= 4:
+            # Show all chips if 4 or fewer
+            for data, text in selected_items_list:
+                chip = Chip(text, data)
+                chip.removed.connect(self.removeChip)
+                self.chip_layout.addWidget(chip)
+        else:
+            # Show first 4 chips + "view all" button
+            for data, text in selected_items_list[:4]:
+                chip = Chip(text, data)
+                chip.removed.connect(self.removeChip)
+                self.chip_layout.addWidget(chip)
+
+            # Add "view all" chip-like button
+            remaining_count = total_items - 4
+            view_all_chip = ViewAllChip(f"+ {remaining_count} more")
+            view_all_chip.clicked.connect(self.show_all_items_dialog)
+            self.chip_layout.addWidget(view_all_chip)
+
+        self.chip_container.setVisible(True)
+
+    def currentData(self):
+        """Return the list of selected data values."""
+        return list(self._selected_items.keys())
+
+    def setCurrentData(self, data_list):
+        """Set the current selection by data values."""
+        self._selected_items = {item: item for item in data_list}
+        self._updateChips()
+
+    def eventFilter(self, obj, event):
+        """Event filter to redirect keyboard events from popup to search box."""
+        if obj == self.popup or obj == self.results_list:
+            if event.type() == QEvent.KeyPress:
+                # Handle Escape key to close popup
+                if event.key() == Qt.Key_Escape:
+                    self.popup.hide()
+                    self.search_box.clear()
+                    self.search_box.setFocus()
+                    return True
+
                 # Redirect key press events to the search box
                 if self.search_box.isVisible() and self.search_box.isEnabled():
                     # Send the key event to the search box
