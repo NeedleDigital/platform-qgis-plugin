@@ -49,7 +49,7 @@ from ..config.constants import (
     LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY, MAX_SAFE_IMPORT_LOCATION_ONLY,
     PARTIAL_IMPORT_LIMIT_LOCATION_ONLY, DEFAULT_HOLE_TYPES
 )
-from ..utils.logging import log_warning
+from ..utils.logging import log_warning, log_error
 
 
 class DataImporterDialog(QDialog):
@@ -1011,7 +1011,7 @@ class DataImporterDialog(QDialog):
                 QTimer.singleShot(duration, lambda: self.message_bar.setVisible(False))
         except Exception as e:
             # If all else fails, just log the message
-            print(f"Failed to show plugin message: {message} (Error: {e})")
+            log_error(f"Failed to show plugin message: {message} (Error: {e})")
 
     def validate_token_on_show(self):
         """Validate token when dialog is shown and logout if expired."""
@@ -1020,7 +1020,7 @@ class DataImporterDialog(QDialog):
             # or call the parent's validation method
             self.validate_token_requested.emit()
         except Exception as e:
-            print(f"Token validation error: {e}")
+            log_error(f"Token validation error: {e}")
 
     # Add signal for token validation requests
     validate_token_requested = pyqtSignal()
