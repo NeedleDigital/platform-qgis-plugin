@@ -227,6 +227,7 @@ class DataImporter:
         self.data_manager.loading_started.connect(self.dlg.show_loading)  # Show loading state
         self.data_manager.loading_finished.connect(self.dlg.hide_loading)  # Hide loading state
         self.data_manager.companies_search_results.connect(self.dlg.handle_company_search_results)  # Company search results
+        self.data_manager.login_required.connect(self._handle_login_required)  # Direct login dialog when auth needed
         
         # API client signals
         self.data_manager.api_client.login_success.connect(self._handle_login_success)
@@ -235,6 +236,9 @@ class DataImporter:
         # Connect to silent login completion for UI updates
         self.data_manager.api_client.login_success.connect(self._update_ui_on_auth_change)
         self.data_manager.api_client.login_failed.connect(self._update_ui_on_auth_change)
+
+        # Connect token validation requests from dialog
+        self.dlg.validate_token_requested.connect(self._validate_token_and_logout_if_expired)
 
     def _handle_login_request(self):
         """Handle login request from dialog."""
@@ -257,18 +261,21 @@ class DataImporter:
     def _handle_logout_request(self):
         """Handle logout request from dialog."""
         try:
+            # Check if user was actually authenticated before logout
+            was_authenticated = self.data_manager.api_client.is_authenticated()
+
             self.data_manager.api_client.logout()
             self.dlg.update_login_status(False)
-            
+
             # Clear any existing data
             self.dlg.show_data("Holes", [], [], {'has_data': False, 'current_page': 0, 'total_pages': 0, 'showing_records': 0, 'total_records': 0, 'records_per_page': 100})
             self.dlg.show_data("Assays", [], [], {'has_data': False, 'current_page': 0, 'total_pages': 0, 'showing_records': 0, 'total_records': 0, 'records_per_page': 100})
-            
-            # Show logout success message in plugin dialog
-            if self.dlg:
+
+            # Only show logout success message if user was actually logged in
+            if was_authenticated and self.dlg:
                 self.dlg.show_plugin_message("Logged out successfully", "info", 3000)
-            
-            
+
+
         except Exception as e:
             error_msg = f"Logout error: {str(e)}"
             log_error(error_msg)
@@ -334,6 +341,33 @@ class DataImporter:
                 self.dlg.update_login_status(is_authenticated)
         except Exception as e:
             log_error(f"UI update error: {str(e)}")
+
+    def _validate_token_and_logout_if_expired(self):
+        """Validate token and automatically logout if expired."""
+        try:
+            if not self.data_manager.is_authenticated():
+                # Token is expired or invalid, logout user
+                self._handle_logout_request()
+                # Show message about session expiration
+                if self.dlg:
+                    self.dlg.show_plugin_message("Session expired. Please log in again.", "warning", 4000)
+        except Exception as e:
+            log_error(f"Token validation error: {str(e)}")
+
+    def _handle_login_required(self):
+        """Handle login required signal - show login dialog directly."""
+        try:
+            # Ensure user is logged out first
+            self._handle_logout_request()
+
+            # Show login dialog directly without error message
+            if not self.login_dlg:
+                self.login_dlg = LoginDialog(self.dlg)
+                self.login_dlg.login_attempt.connect(self._handle_login_attempt)
+
+            self.login_dlg.exec_()
+        except Exception as e:
+            log_error(f"Login required handler error: {str(e)}")
 
     def _handle_data_fetch_request(self, tab_name, params, fetch_all):
         """Handle data fetch request."""

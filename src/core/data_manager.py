@@ -82,6 +82,7 @@ class DataManager(QObject):
     loading_started = pyqtSignal(str)  # tab_name - Loading state begins
     loading_finished = pyqtSignal(str)  # tab_name - Loading state ends
     companies_search_results = pyqtSignal(list)  # Company search results
+    login_required = pyqtSignal()  # Authentication required - show login dialog
     
     def __init__(self):
         super().__init__()
@@ -155,7 +156,8 @@ class DataManager(QObject):
             fetch_all: Whether to fetch all available records
         """
         if not self.is_authenticated():
-            self.error_occurred.emit(VALIDATION_MESSAGES['auth_required'])
+            # Instead of showing error message, trigger direct login dialog
+            self.login_required.emit()
             return
         
         # Emit loading started signal
@@ -575,7 +577,9 @@ class DataManager(QObject):
             company_name: Company name search query (minimum 3 characters)
         """
         if not self.is_authenticated():
-                return
+            # Show login dialog instead of failing silently for company search
+            self.login_required.emit()
+            return
         
         if not company_name or len(company_name.strip()) < 3:
             # Clear search results for short queries

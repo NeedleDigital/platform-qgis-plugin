@@ -96,9 +96,17 @@ class ApiClient(QObject):
         self.token_refresh_timer = QTimer()
         self.token_refresh_timer.timeout.connect(lambda: self.refresh_auth_token(silent=True))
         
-        # Load saved refresh token but don't refresh immediately
+        # Load saved tokens and expiration time but don't refresh immediately
         settings = QgsSettings()
         self.refresh_token = settings.value("needle/refreshToken", None)
+        self.auth_token = settings.value("needle/authToken", None)
+
+        # Safely load token expiration time
+        try:
+            expires_value = settings.value("needle/tokenExpiresAt", 0)
+            self.token_expires_at = float(expires_value) if expires_value else 0
+        except (ValueError, TypeError):
+            self.token_expires_at = 0
     
     def complete_initialization(self):
         """Complete initialization and attempt silent token refresh if needed."""
@@ -142,11 +150,13 @@ class ApiClient(QObject):
         self.refresh_token = None
         self.token_expires_at = 0
         self.token_refresh_timer.stop()
-        
-        # Clear stored refresh token
+
+        # Clear all stored tokens and expiration time
         settings = QgsSettings()
         settings.remove("needle/refreshToken")
-        
+        settings.remove("needle/authToken")
+        settings.remove("needle/tokenExpiresAt")
+
         # Cancel any ongoing requests
         self.cancel_all_requests()
     
@@ -289,9 +299,11 @@ class ApiClient(QObject):
             expires_in = int(response_data.get("expiresIn", 3600))
             self.token_expires_at = time.time() + expires_in
             
-            # Save refresh token
+            # Save tokens and expiration time
             settings = QgsSettings()
             settings.setValue("needle/refreshToken", self.refresh_token)
+            settings.setValue("needle/authToken", self.auth_token)
+            settings.setValue("needle/tokenExpiresAt", str(self.token_expires_at))
             
             # Setup token refresh timer
             refresh_delay_ms = max(0, (expires_in - 60) * 1000)  # Refresh 1 minute before expiry
@@ -315,10 +327,11 @@ class ApiClient(QObject):
                 expires_in = int(response_data.get("expires_in", 3600))
                 self.token_expires_at = time.time() + expires_in
                 
-                # Update stored refresh token if new one provided
-                if response_data.get("refresh_token"):
-                    settings = QgsSettings()
-                    settings.setValue("needle/refreshToken", self.refresh_token)
+                # Save updated tokens and expiration time
+                settings = QgsSettings()
+                settings.setValue("needle/refreshToken", self.refresh_token)
+                settings.setValue("needle/authToken", self.auth_token)
+                settings.setValue("needle/tokenExpiresAt", str(self.token_expires_at))
                 
                 # Schedule next refresh
                 refresh_delay_ms = max(0, (expires_in - 60) * 1000)

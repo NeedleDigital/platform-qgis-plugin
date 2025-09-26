@@ -273,13 +273,34 @@ class DataImporterDialog(QDialog):
             fetch_all_checkbox = QCheckBox("Fetch all records")
             fetch_all_checkbox.toggled.connect(count_input.setDisabled)
 
-            # Fetch location only checkbox
+            # Fetch location only checkbox with info icon
             fetch_location_only_checkbox = QCheckBox("Fetch Location Only")
+
+            # Create info icon button for holes section
+            holes_location_info_button = QPushButton("ℹ")
+            holes_location_info_button.setFixedSize(20, 20)
+            holes_location_info_button.setToolTip("Click for information about Fetch Location Only")
+            holes_location_info_button.setStyleSheet("""
+                QPushButton {
+                    border: 1px solid #999;
+                    border-radius: 10px;
+                    background-color: #e8f4f8;
+                    color: #2196F3;
+                    font-weight: bold;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    background-color: #d1e7dd;
+                    border-color: #2196F3;
+                }
+            """)
+            holes_location_info_button.clicked.connect(self.show_location_only_info)
 
             records_layout = QHBoxLayout()
             records_layout.addWidget(count_input)
             records_layout.addWidget(fetch_all_checkbox)
             records_layout.addWidget(fetch_location_only_checkbox)
+            records_layout.addWidget(holes_location_info_button)
             records_layout.addStretch()
             controls_layout.addRow("No. of Records:", records_layout)
 
@@ -288,7 +309,7 @@ class DataImporterDialog(QDialog):
                 'fetch_all_checkbox': fetch_all_checkbox,
                 'fetch_location_only_checkbox': fetch_location_only_checkbox
             })
-            
+
             # Fetch button
             fetch_button = QPushButton("Fetch Holes")
             fetch_button.setDefault(False)
@@ -405,13 +426,34 @@ class DataImporterDialog(QDialog):
             fetch_all_checkbox = QCheckBox("Fetch all records")
             fetch_all_checkbox.toggled.connect(count_input.setDisabled)
 
-            # Fetch location only checkbox
+            # Fetch location only checkbox with info icon
             fetch_location_only_checkbox = QCheckBox("Fetch Location Only")
+
+            # Create info icon button for assays section
+            assays_location_info_button = QPushButton("ℹ")
+            assays_location_info_button.setFixedSize(20, 20)
+            assays_location_info_button.setToolTip("Click for information about Fetch Location Only")
+            assays_location_info_button.setStyleSheet("""
+                QPushButton {
+                    border: 1px solid #999;
+                    border-radius: 10px;
+                    background-color: #e8f4f8;
+                    color: #2196F3;
+                    font-weight: bold;
+                    font-size: 12px;
+                }
+                QPushButton:hover {
+                    background-color: #d1e7dd;
+                    border-color: #2196F3;
+                }
+            """)
+            assays_location_info_button.clicked.connect(self.show_location_only_info)
 
             records_layout = QHBoxLayout()
             records_layout.addWidget(count_input)
             records_layout.addWidget(fetch_all_checkbox)
             records_layout.addWidget(fetch_location_only_checkbox)
+            records_layout.addWidget(assays_location_info_button)
             records_layout.addStretch()
             controls_layout.addRow("No. of Records:", records_layout)
 
@@ -420,7 +462,7 @@ class DataImporterDialog(QDialog):
                 'fetch_all_checkbox': fetch_all_checkbox,
                 'fetch_location_only_checkbox': fetch_location_only_checkbox
             })
-            
+
             # Fetch button
             fetch_button = QPushButton("Fetch Assay Data")
             fetch_button.setDefault(False)
@@ -971,6 +1013,18 @@ class DataImporterDialog(QDialog):
             # If all else fails, just log the message
             print(f"Failed to show plugin message: {message} (Error: {e})")
 
+    def validate_token_on_show(self):
+        """Validate token when dialog is shown and logout if expired."""
+        try:
+            # This method will be called from data_importer, so we need to emit a signal
+            # or call the parent's validation method
+            self.validate_token_requested.emit()
+        except Exception as e:
+            print(f"Token validation error: {e}")
+
+    # Add signal for token validation requests
+    validate_token_requested = pyqtSignal()
+
     def show_ppm_info(self):
         """Show information about supported measurement units."""
         QMessageBox.information(
@@ -978,6 +1032,22 @@ class DataImporterDialog(QDialog):
             "Measurement Units",
             "Currently our system only serves ppm (parts per million) values.\n"
             "We will be adding more measurement units in the future."
+        )
+
+    def show_location_only_info(self):
+        """Show information about Fetch Location Only feature."""
+        QMessageBox.information(
+            self, "Fetch Location Only Info",
+            "Enable this option for faster loading of large datasets.\n\n"
+            "When enabled:\n"
+            "• Only coordinates are fetched\n"
+            "• Significantly faster data retrieval and processing\n"
+            "• Reduced memory usage for large datasets\n"
+            "• Ideal for viewing drill hole locations on the map\n\n"
+            "When disabled:\n"
+            "• Full dataset with all attributes is fetched\n"
+            "• Slower for large datasets but includes complete data\n"
+            "• Better for detailed analysis and attribute queries\n\n"
         )
 
     def show_cancel_button(self):
@@ -992,13 +1062,16 @@ class DataImporterDialog(QDialog):
         """Show the dialog and bring it to front."""
         # Show the dialog
         self.show()
-        
+
         # Bring to front and activate
         self.raise_()
         self.activateWindow()
-        
+
         # For additional assurance on some systems
         self.setWindowState(self.windowState() & ~Qt.WindowMinimized | Qt.WindowActive)
+
+        # Check token validity when dialog is shown/brought to front
+        self.validate_token_on_show()
     
     def show_loading(self, tab_name: str):
         """Show loading state for the specified tab."""
