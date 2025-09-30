@@ -276,7 +276,7 @@ class QGISLayerManager:
 
 
     def _setup_hover_tooltips(self, layer: QgsVectorLayer):
-        """Setup hover tooltips (map tips) for the layer showing company name and hole ID."""
+        """Setup hover tooltips (map tips) for the layer showing company name and hole ID (or collar ID as fallback)."""
         try:
             # Get field names from the layer
             field_names = [field.name() for field in layer.fields()]
@@ -295,8 +295,15 @@ class QGISLayerManager:
                     hole_id_field = field_name
                     break
 
+            # Find collar ID field as fallback - try common variations
+            collar_id_field = None
+            for field_name in ['collar_id', 'collarid', 'collar']:
+                if field_name in field_names:
+                    collar_id_field = field_name
+                    break
+
             # Only setup tooltips if we have at least one of the required fields
-            if not company_field and not hole_id_field:
+            if not company_field and not hole_id_field and not collar_id_field:
                 return
 
             # Build HTML template for hover tooltip
@@ -305,8 +312,17 @@ class QGISLayerManager:
             if company_field:
                 tooltip_parts.append(f'<b>Company:</b> [% "{company_field}" %]')
 
-            if hole_id_field:
+            # Show hole_id if available, otherwise show collar_id as fallback
+            if hole_id_field and collar_id_field:
+                # Use QGIS expression to show hole_id if not empty, otherwise collar_id
+                # COALESCE returns the first non-null value
+                tooltip_parts.append(
+                    f'<b>Hole ID:</b> [% COALESCE("{hole_id_field}", "{collar_id_field}") %]'
+                )
+            elif hole_id_field:
                 tooltip_parts.append(f'<b>Hole ID:</b> [% "{hole_id_field}" %]')
+            elif collar_id_field:
+                tooltip_parts.append(f'<b>Collar ID:</b> [% "{collar_id_field}" %]')
 
             # Create HTML template with good readability (light background, dark text)
             tooltip_html = f"""

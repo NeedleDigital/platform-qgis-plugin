@@ -1004,9 +1004,10 @@ class DataImporterDialog(QDialog):
         if not checked:
             return  # Allow unchecking
 
-        # Get the checkbox widget
+        # Get the widgets
         tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
         fetch_all_checkbox = tab_widgets['fetch_all_checkbox']
+        count_input = tab_widgets['count_input']
 
         # Check if user is logged in
         if not self.data_manager or not self.data_manager.is_authenticated():
@@ -1014,6 +1015,8 @@ class DataImporterDialog(QDialog):
             fetch_all_checkbox.blockSignals(True)
             fetch_all_checkbox.setChecked(False)
             fetch_all_checkbox.blockSignals(False)
+            # Re-enable the count input field
+            count_input.setEnabled(True)
             self.show_info("Please login before using 'Fetch all records'")
             return
 
@@ -1024,6 +1027,8 @@ class DataImporterDialog(QDialog):
             fetch_all_checkbox.blockSignals(True)
             fetch_all_checkbox.setChecked(False)
             fetch_all_checkbox.blockSignals(False)
+            # Re-enable the count input field
+            count_input.setEnabled(True)
 
             if role == "tier_1":
                 self.show_info(
@@ -1507,6 +1512,7 @@ class DataImporterDialog(QDialog):
         # Reset record count and fetch all checkbox
         holes_tab['count_input'].setText("100")
         holes_tab['fetch_all_checkbox'].setChecked(False)
+        holes_tab['count_input'].setEnabled(True)  # Ensure count input is enabled
         holes_tab['fetch_location_only_checkbox'].setChecked(False)
         
         # Reset Assays tab filters  
@@ -1539,6 +1545,7 @@ class DataImporterDialog(QDialog):
         # Reset record count and fetch all checkbox
         assays_tab['count_input'].setText("100")
         assays_tab['fetch_all_checkbox'].setChecked(False)
+        assays_tab['count_input'].setEnabled(True)  # Ensure count input is enabled
         assays_tab['fetch_location_only_checkbox'].setChecked(False)
     
     def _on_company_search_text_changed(self, text: str):
