@@ -33,6 +33,46 @@ PLUGIN_VERSION = "1.0.0"
 PLUGIN_AUTHOR = "Needle Digital"
 PLUGIN_DESCRIPTION = "Import Australian mining drill hole data into QGIS"
 
+# User Role Configuration
+ROLE_DISPLAY_NAMES = {
+    "tier_1": "Free Trial",
+    "tier_2": "Premium",
+    "admin": "Admin"
+}
+
+ROLE_DESCRIPTIONS = {
+    "tier_1": (
+        "Free Trial Plan\n\n"
+        "Features:\n"
+        "• Access to Australian mining data\n"
+        "• Filter by state, company, and elements\n"
+        "• Up to 1,000 records per fetch\n\n"
+        "Limitations:\n"
+        "• Cannot use 'Fetch all records' feature\n"
+        "• Limited to 1,000 records at a time\n\n"
+        "Upgrade to Premium for unlimited access!"
+    ),
+    "tier_2": (
+        "Premium Plan\n\n"
+        "Features:\n"
+        "• All Free Trial features\n"
+        "• Unlimited record fetching\n"
+        "• 'Fetch all records' capability\n"
+        "• Advanced filtering options\n"
+        "• Priority support\n\n"
+        "Thank you for being a Premium member!"
+    ),
+    "admin": (
+        "Administrator Access\n\n"
+        "Full access to all features:\n"
+        "• Unlimited data access\n"
+        "• All premium features\n"
+        "• Administrative privileges\n"
+        "• Complete system access\n\n"
+        "Administrator privileges active."
+    )
+}
+
 # API Configuration
 NEEDLE_FIREBASE_API_KEY = "AIzaSyCuX5I0TaQCVmIUVdo1uM_aOQ3zVkrUV8Y"
 NEEDLE_BASE_API_URL = "https://master.api.drh.needle-digital.com"
@@ -127,12 +167,12 @@ API_ENDPOINTS = {
 # UI Configuration
 UI_CONFIG = {
     'main_window': {
-        'title': 'Needle Digital - Mining Data Importer',
+        'title': 'Needle Digital - Drilling Data Importer',
         'min_width': 850,
         'min_height': 700
     },
     'brand_label': {
-        'text': 'Geochemical Data Importer',
+        'text': 'Data Importer',
         'font_size': 16,
         'bold': True
     },

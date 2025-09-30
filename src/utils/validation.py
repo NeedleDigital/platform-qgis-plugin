@@ -3,6 +3,8 @@ Validation utilities for the ND Data Importer plugin.
 """
 
 import re
+import json
+import base64
 from typing import List, Optional, Tuple, Any, Dict
 from ..config.constants import VALIDATION_MESSAGES
 
@@ -136,3 +138,77 @@ def _is_numeric(value: str) -> bool:
         return True
     except (ValueError, TypeError):
         return False
+
+def decode_jwt_token(token: str) -> Optional[Dict[str, Any]]:
+    """
+    Decode JWT token and extract payload without verification.
+
+    Args:
+        token: JWT token string
+
+    Returns:
+        Dictionary containing token payload, or None if decoding fails
+    """
+    if not token:
+        return None
+
+    try:
+        # JWT tokens have 3 parts separated by dots: header.payload.signature
+        parts = token.split('.')
+        if len(parts) != 3:
+            return None
+
+        # Decode the payload (second part)
+        payload = parts[1]
+
+        # Add padding if needed (JWT uses base64url encoding)
+        padding = 4 - len(payload) % 4
+        if padding != 4:
+            payload += '=' * padding
+
+        # Decode base64
+        decoded_bytes = base64.b64decode(payload)
+        decoded_str = decoded_bytes.decode('utf-8')
+
+        # Parse JSON
+        payload_data = json.loads(decoded_str)
+        return payload_data
+
+    except Exception:
+        return None
+
+def get_user_role_from_token(token: str) -> Optional[str]:
+    """
+    Extract user role from JWT token.
+
+    Args:
+        token: JWT token string
+
+    Returns:
+        User role string (tier_1, tier_2, admin) or None if not found
+    """
+    payload = decode_jwt_token(token)
+    if not payload:
+        return None
+
+    # Try different possible locations for the role claim
+    # Firebase custom claims are typically nested
+    role = payload.get('role')
+    if role:
+        return role
+
+    # Check custom claims
+    custom_claims = payload.get('custom_claims', {})
+    if isinstance(custom_claims, dict):
+        role = custom_claims.get('role')
+        if role:
+            return role
+
+    # Check claims at root level
+    claims = payload.get('claims', {})
+    if isinstance(claims, dict):
+        role = claims.get('role')
+        if role:
+            return role
+
+    return None
