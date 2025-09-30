@@ -50,7 +50,7 @@ ROLE_DESCRIPTIONS = {
         "Limitations:\n"
         "• Cannot use 'Fetch all records' feature\n"
         "• Limited to 1,000 records at a time\n\n"
-        "Upgrade to Premium for unlimited access!"
+        "Contact Needle Digital for upgrade to Premium for unlimited access!"
     ),
     "tier_2": (
         "Premium Plan\n\n"

@@ -37,7 +37,7 @@ from qgis.core import (
     QgsProject, QgsSymbol, QgsSingleSymbolRenderer, QgsMessageLog,
     Qgis, QgsCoordinateReferenceSystem, QgsCoordinateTransform
 )
-from qgis.PyQt.QtCore import QVariant
+from qgis.PyQt.QtCore import QVariant, QMetaType
 from qgis.PyQt.QtGui import QColor
 
 # Configuration imports for styling and thresholds
@@ -172,17 +172,21 @@ class QGISLayerManager:
             if is_location_only and key.lower() == 'location_string':
                 continue
 
-            # Determine field type based on value
+            # Determine field type using QMetaType (non-deprecated method)
             if isinstance(value, int):
-                field_type = QVariant.Int
+                field_type = QMetaType.Type.Int
+                type_name = "integer"
             elif isinstance(value, float):
-                field_type = QVariant.Double
+                field_type = QMetaType.Type.Double
+                type_name = "double"
             elif isinstance(value, bool):
-                field_type = QVariant.Bool
+                field_type = QMetaType.Type.Bool
+                type_name = "boolean"
             else:
-                field_type = QVariant.String
+                field_type = QMetaType.Type.QString
+                type_name = "string"
 
-            fields.append(QgsField(key, field_type))
+            fields.append(QgsField(key, field_type, type_name))
 
         return fields
     
@@ -332,6 +336,10 @@ class QGISLayerManager:
             # Get field names from the layer
             field_names = [field.name() for field in layer.fields()]
 
+            # Debug: Log available field names
+            from .logging import log_warning
+            log_warning(f"Location tooltip setup - Available fields: {field_names}")
+
             # Find latitude field - try common variations
             lat_field = None
             for field_name in ['latitude', 'lat', 'y']:
@@ -346,8 +354,12 @@ class QGISLayerManager:
                     lon_field = field_name
                     break
 
+            # Debug: Log found fields
+            log_warning(f"Location tooltip setup - Found lat_field: {lat_field}, lon_field: {lon_field}")
+
             # Only setup tooltips if we have both lat and lon fields
             if not lat_field or not lon_field:
+                log_warning(f"Location tooltip setup - Missing fields! Cannot setup tooltips.")
                 return
 
             # Create HTML template with good readability (white background, dark text)
@@ -368,6 +380,7 @@ class QGISLayerManager:
 
             # Set the map tip template
             layer.setMapTipTemplate(tooltip_html)
+            log_warning(f"Location tooltip setup - Successfully set map tip template")
 
         except Exception as e:
             log_warning(f"Failed to setup location tooltips: {e}")

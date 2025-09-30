@@ -973,7 +973,12 @@ class DataImporterDialog(QDialog):
                     # Show error styling
                     count_input.setStyleSheet("border: 2px solid #f44336; background-color: #ffebee;")
 
-                    # Show message
+                    # Reset to 1000
+                    count_input.blockSignals(True)
+                    count_input.setText("1000")
+                    count_input.blockSignals(False)
+
+                    # Show message (this blocks until user clicks OK)
                     self.show_info(
                         "Free Trial Record Limit Exceeded\n\n"
                         "As a Free Trial user, you can fetch a maximum of 1,000 records at a time.\n\n"
@@ -981,13 +986,8 @@ class DataImporterDialog(QDialog):
                         "Upgrade to Premium for unlimited record fetching!"
                     )
 
-                    # Reset to 1000
-                    count_input.blockSignals(True)
-                    count_input.setText("1000")
-                    count_input.blockSignals(False)
-
-                    # Clear error styling after a short delay
-                    QTimer.singleShot(2000, lambda: count_input.setStyleSheet(""))
+                    # Clear error styling immediately after user dismisses the popup
+                    count_input.setStyleSheet("")
                 else:
                     # Valid input, clear any error styling
                     count_input.setStyleSheet("")
@@ -1027,9 +1027,9 @@ class DataImporterDialog(QDialog):
 
             if role == "tier_1":
                 self.show_info(
-                    "Fetch All Records - Tier 1 Limitation\n\n"
-                    "You are currently on Tier 1 (Trial). On this tier, you can fetch a maximum of 1000 records at a time.\n\n"
-                    "To unlock unlimited record fetching, please upgrade to Tier 2 or higher."
+                    "Fetch All Records - Free Trial Limitation\n\n"
+                    "You are currently on Free Trial. On this tier, you can fetch a maximum of 1000 records at a time.\n\n"
+                    "To unlock unlimited record fetching, please upgrade to Premium by contacting Needle Digital."
                 )
             else:
                 self.show_info("You don't have permission to fetch all records.")
