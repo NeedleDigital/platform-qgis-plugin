@@ -96,7 +96,7 @@ class QGISLayerManager:
             layer_name: Name for the new layer
             data: List of dictionaries containing point data
             color: Point color (optional)
-            is_location_only: Whether this is location-only data (affects hover tooltips)
+            is_location_only: Whether this is location-only data (affects hover tooltips and field inclusion)
 
         Returns:
             Tuple of (success, message)
@@ -104,19 +104,20 @@ class QGISLayerManager:
         try:
             if not data:
                 return False, "No data to import"
-            
+
             # Create layer with WGS84 CRS since data is in lat/lon coordinates
             crs = QgsCoordinateReferenceSystem("EPSG:4326")
             layer = QgsVectorLayer(f"Point?crs={crs.authid()}", layer_name, "memory")
-            
+
             if not layer.isValid():
                 return False, "Failed to create layer"
-            
+
             # Get data provider
             provider = layer.dataProvider()
-            
+
             # Define fields based on first record
-            fields = self._create_fields_from_data(data[0])
+            # For location-only data, include lat/lon as attributes
+            fields = self._create_fields_from_data(data[0], is_location_only)
             provider.addAttributes(fields)
             layer.updateFields()
             
@@ -149,15 +150,28 @@ class QGISLayerManager:
             log_error(error_msg)
             return False, error_msg
     
-    def _create_fields_from_data(self, sample_record: Dict[str, Any]) -> List[QgsField]:
-        """Create QGIS fields from sample data record."""
+    def _create_fields_from_data(self, sample_record: Dict[str, Any], is_location_only: bool = False) -> List[QgsField]:
+        """Create QGIS fields from sample data record.
+
+        Args:
+            sample_record: Sample data record to extract field types from
+            is_location_only: If True, include latitude/longitude as attributes
+
+        Returns:
+            List of QgsField objects
+        """
         fields = []
-        
+
         for key, value in sample_record.items():
-            # Skip coordinate fields as they're handled separately
-            if key.lower() in ['latitude', 'longitude', 'lat', 'lon', 'x', 'y']:
+            # For location-only data, keep latitude and longitude as attributes
+            # For full data, skip coordinate fields as they're only used for geometry
+            if not is_location_only and key.lower() in ['latitude', 'longitude', 'lat', 'lon', 'x', 'y']:
                 continue
-            
+
+            # Skip location_string for location-only data (not useful in identify results)
+            if is_location_only and key.lower() == 'location_string':
+                continue
+
             # Determine field type based on value
             if isinstance(value, int):
                 field_type = QVariant.Int
@@ -167,9 +181,9 @@ class QGISLayerManager:
                 field_type = QVariant.Bool
             else:
                 field_type = QVariant.String
-            
+
             fields.append(QgsField(key, field_type))
-        
+
         return fields
     
     def _create_feature_from_record(self, record: Dict[str, Any], 
@@ -244,8 +258,10 @@ class QGISLayerManager:
             renderer = QgsSingleSymbolRenderer(symbol)
             layer.setRenderer(renderer)
 
-            # Setup hover tooltips (map tips) for non-location-only data
-            if not is_location_only:
+            # Setup hover tooltips (map tips)
+            if is_location_only:
+                self._setup_location_tooltips(layer)
+            else:
                 self._setup_hover_tooltips(layer)
 
             # Refresh layer
@@ -309,6 +325,52 @@ class QGISLayerManager:
 
         except Exception as e:
             log_warning(f"Failed to setup hover tooltips: {e}")
+
+    def _setup_location_tooltips(self, layer: QgsVectorLayer):
+        """Setup hover tooltips (map tips) for location-only data showing latitude and longitude."""
+        try:
+            # Get field names from the layer
+            field_names = [field.name() for field in layer.fields()]
+
+            # Find latitude field - try common variations
+            lat_field = None
+            for field_name in ['latitude', 'lat', 'y']:
+                if field_name in field_names:
+                    lat_field = field_name
+                    break
+
+            # Find longitude field - try common variations
+            lon_field = None
+            for field_name in ['longitude', 'lon', 'lng', 'x']:
+                if field_name in field_names:
+                    lon_field = field_name
+                    break
+
+            # Only setup tooltips if we have both lat and lon fields
+            if not lat_field or not lon_field:
+                return
+
+            # Create HTML template with good readability (white background, dark text)
+            tooltip_html = f"""
+            <div style="background-color: #ffffff;
+                        border: 2px solid #333333;
+                        border-radius: 8px;
+                        padding: 8px 12px;
+                        font-family: Arial, sans-serif;
+                        font-size: 12px;
+                        color: #333333;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+                        max-width: 250px;">
+                <b>Latitude:</b> [% "{lat_field}" %]<br/>
+                <b>Longitude:</b> [% "{lon_field}" %]
+            </div>
+            """
+
+            # Set the map tip template
+            layer.setMapTipTemplate(tooltip_html)
+
+        except Exception as e:
+            log_warning(f"Failed to setup location tooltips: {e}")
 
     def _zoom_to_layer(self, layer: QgsVectorLayer):
         """Zoom to the full extent of the layer with proper CRS transformation."""
@@ -432,7 +494,7 @@ class QGISLayerManager:
             data: List of dictionaries containing point data
             color: Point color (optional)
             progress_callback: Function to call with progress updates (processed_count, chunk_info)
-            is_location_only: Whether this is location-only data (affects hover tooltips)
+            is_location_only: Whether this is location-only data (affects hover tooltips and field inclusion)
 
         Returns:
             Tuple of (success, message)
@@ -440,21 +502,22 @@ class QGISLayerManager:
         try:
             if not data:
                 return False, "No data to import"
-            
+
             total_records = len(data)
-            
+
             # Create layer with WGS84 CRS since data is in lat/lon coordinates
             crs = QgsCoordinateReferenceSystem("EPSG:4326")
             layer = QgsVectorLayer(f"Point?crs={crs.authid()}", layer_name, "memory")
-            
+
             if not layer.isValid():
                 return False, "Failed to create layer"
-            
+
             # Get data provider
             provider = layer.dataProvider()
-            
+
             # Define fields based on first record
-            fields = self._create_fields_from_data(data[0])
+            # For location-only data, include lat/lon as attributes
+            fields = self._create_fields_from_data(data[0], is_location_only)
             provider.addAttributes(fields)
             layer.updateFields()
             

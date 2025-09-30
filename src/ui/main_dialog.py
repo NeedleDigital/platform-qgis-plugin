@@ -895,10 +895,10 @@ class DataImporterDialog(QDialog):
                     color: #1976D2;
                     border: 1px solid #64B5F6;
                     border-radius: 4px;
-                    padding: 4px 10px;
+                    padding: 2px 6px;
                     font-weight: bold;
                     font-size: 10px;
-                    max-height: 24px;
+                    max-height: 18px;
                 }
                 QPushButton:hover {
                     background-color: #BBDEFB;
@@ -916,10 +916,10 @@ class DataImporterDialog(QDialog):
                     color: #E65100;
                     border: 1px solid #FFB74D;
                     border-radius: 4px;
-                    padding: 4px 10px;
+                    padding: 2px 6px;
                     font-weight: bold;
                     font-size: 10px;
-                    max-height: 24px;
+                    max-height: 18px;
                 }
                 QPushButton:hover {
                     background-color: #FFE0B2;
@@ -937,10 +937,10 @@ class DataImporterDialog(QDialog):
                     color: #6A1B9A;
                     border: 1px solid #BA68C8;
                     border-radius: 4px;
-                    padding: 4px 10px;
+                    padding: 2px 6px;
                     font-weight: bold;
                     font-size: 10px;
-                    max-height: 24px;
+                    max-height: 18px;
                 }
                 QPushButton:hover {
                     background-color: #E1BEE7;
