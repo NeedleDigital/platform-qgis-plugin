@@ -116,6 +116,9 @@ deploy: compile doc transcompile
 	@echo "------------------------------------------"
 	@echo "Deploying plugin to your .qgis2 directory."
 	@echo "------------------------------------------"
+	# Clean __pycache__ from source before deploying
+	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	@find . -name "*.pyc" -delete 2>/dev/null || true
 	# The deploy  target only works on unix like operating system where
 	# the Python plugin directory is located at:
 	# $HOME/$(QGISDIR)/python/plugins
@@ -135,6 +138,7 @@ dclean:
 	@echo "Removing any compiled python files."
 	@echo "-----------------------------------"
 	find $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME) -iname "*.pyc" -delete
+	find $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME) -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 	find $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME) -iname ".git" -prune -exec rm -Rf {} \;
 	find $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME) -name ".DS_Store" -delete
 
@@ -201,6 +205,16 @@ clean:
 	@echo "Removing uic and rcc generated files"
 	@echo "------------------------------------"
 	rm $(COMPILED_UI_FILES) $(COMPILED_RESOURCE_FILES)
+
+pyclean:
+	@echo
+	@echo "------------------------------------"
+	@echo "Removing Python cache files"
+	@echo "------------------------------------"
+	@find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	@find . -name "*.pyc" -delete 2>/dev/null || true
+	@find . -name "*.pyo" -delete 2>/dev/null || true
+	@echo "Python cache files removed"
 
 doc:
 	@echo
