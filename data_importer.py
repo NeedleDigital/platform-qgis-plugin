@@ -95,7 +95,7 @@ class DataImporter:
 
         # Initialize components
         self.actions = []
-        self.menu = self.tr(u'&Needle Digital Tools')
+        self.menu = self.tr(u'&Needle Digital Plugin')
         
         # Core components
         self.data_manager = None
@@ -140,7 +140,7 @@ class DataImporter:
         
         self.add_action(
             icon_path,
-            text=self.tr(u'Mining Data Importer'),
+            text=self.tr(u'Drilling Data Importer'),
             callback=self.run,
             parent=self.iface.mainWindow(),
             status_tip=self.tr(u'Import Australian mining drill hole data'),
@@ -150,7 +150,7 @@ class DataImporter:
     def unload(self):
         """Remove the plugin menu item and icon from QGIS GUI."""
         for action in self.actions:
-            self.iface.removePluginMenu(self.tr(u'&Needle Digital Tools'), action)
+            self.iface.removePluginMenu(self.tr(u'&Needle Digital Plugin'), action)
             self.iface.removeToolBarIcon(action)
         
         # Clean up
@@ -189,12 +189,14 @@ class DataImporter:
         if not self.data_manager:
             # Initialize data manager
             self.data_manager = DataManager()
-            
+
             # Initialize layer manager
             self.layer_manager = QGISLayerManager(self.iface)
-            
+
             # Initialize main dialog
             self.dlg = DataImporterDialog()
+            # Set data manager reference for role-based checks
+            self.dlg.set_data_manager(self.data_manager)
             self._connect_dialog_signals()
             
 

@@ -73,3 +73,5 @@ tests/
 # Help files
 help/_build/
 help/build/
+
+data_importer.zip

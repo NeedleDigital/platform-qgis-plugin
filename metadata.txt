@@ -5,7 +5,7 @@
 name=ND Data Importer
 qgisMinimumVersion=3.0
 description=Comprehensive QGIS plugin for importing Australian mining drill hole and assay data with advanced filtering, large dataset optimization, and enhanced theme-aware UI
-version=1.2.0
+version=1.3.0
 author=Needle Digital
 email=divyansh@needle-digital.com
 
@@ -29,6 +29,23 @@ tags=mining, drill hole, assay, geochemistry, database, australia, import, data
 
 # Changelog
 changelog=
+    1.3.0 - Role-Based Access Control and Data Protection Features
+        - Implemented comprehensive role-based access control (tier_1, tier_2, admin)
+        - Added JWT token decoding to extract user roles from Firebase auth tokens
+        - Tier 1 (Free Trial) users limited to 1,000 records per fetch maximum
+        - Disabled "Fetch all records" for Free Trial users with informative messaging
+        - Added real-time validation for record count input with visual feedback
+        - Implemented clickable role badge displaying user tier (Free Trial/Premium/Admin)
+        - Role badge shows detailed plan information popup with features and limitations
+        - Added latitude and longitude fields to location-only data in Identify Results
+        - Fixed tooltip styling for location-only data (white background, dark text)
+        - Enhanced hover tooltips to show collar_id as fallback when hole_id is empty
+        - Fixed QgsField deprecation warning by migrating to QMetaType.Type
+        - Improved "Reset All" button to properly re-enable record count field
+        - Fixed text field staying disabled after blocking "Fetch all records" for Free Trial
+        - Added proper error handling and user-friendly messages for all role restrictions
+        - Enhanced security with foundational logic for future tier-based feature controls
+
     1.2.0 - Major UI/UX Enhancements and Authentication Improvements
         - Fixed critical dropdown focus issues with proper keyboard input handling
         - Implemented chip display limitations (max 4 + "view all" button)
@@ -43,28 +60,6 @@ changelog=
         - Fixed incorrect logout messages when user was never logged in
         - Enhanced error handling and fallback mechanisms throughout
         - Removed debug print statements and improved code quality
-
-    1.1.0 - Enhanced UI/UX with Theme-Aware Styling
-        - Implemented comprehensive theme-aware button styling system
-        - Added automatic light/dark theme detection for better visibility
-        - Replaced harsh bright colors with soothing, eye-friendly palette
-        - Enhanced dropdown styling for assay filter and operator selectors
-        - Improved button contrast and readability across all QGIS themes
-        - Added hover and focus states for better user interaction feedback
-        - Configurable theme defaults with fallback styling support
-        - Professional color scheme: sage greens, soft blues, dusty roses
-
-    1.0.0 - Initial release
-        - Complete drill hole and assay data import functionality
-        - State-wise and company-based data filtering
-        - Chemical element filtering with comparison operators
-        - Large dataset optimization (supports 1M+ records)
-        - Automatic OpenStreetMap base layer integration
-        - Chunked processing with progress tracking and cancellation
-        - Memory management and performance optimization
-        - Comprehensive error handling and user feedback
-        - Minimize/maximize dialog window support
-        - Professional UI with tabbed interface
 
 # No external plugin dependencies required
 # All dependencies are standard Python/QGIS libraries

@@ -37,7 +37,7 @@ from qgis.PyQt.QtWidgets import (
     QFormLayout, QSpacerItem, QSizePolicy, QHeaderView, QMessageBox,
     QStackedLayout, QComboBox, QCheckBox, QApplication, QFrame
 )
-from qgis.PyQt.QtGui import QFont, QCursor, QDoubleValidator, QColor
+from qgis.PyQt.QtGui import QFont, QCursor, QDoubleValidator, QColor, QIntValidator
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer
 
 from .components import (
@@ -47,7 +47,8 @@ from .components import (
 from ..config.constants import (
     AUSTRALIAN_STATES, CHEMICAL_ELEMENTS, COMPARISON_OPERATORS, UI_CONFIG,
     LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY, MAX_SAFE_IMPORT_LOCATION_ONLY,
-    PARTIAL_IMPORT_LIMIT_LOCATION_ONLY, DEFAULT_HOLE_TYPES
+    PARTIAL_IMPORT_LIMIT_LOCATION_ONLY, DEFAULT_HOLE_TYPES, ROLE_DISPLAY_NAMES,
+    ROLE_DESCRIPTIONS
 )
 from ..utils.logging import log_warning, log_error
 
@@ -76,12 +77,15 @@ class DataImporterDialog(QDialog):
 
         # Track loading state for each tab
         self._loading_states = {'Holes': False, 'Assays': False}
-        
+
         # Company search timer for debouncing
         self.company_search_timer = QTimer()
         self.company_search_timer.setSingleShot(True)
         self.company_search_timer.timeout.connect(self._perform_company_search)
         self._current_company_query = ""
+
+        # Reference to data manager (will be set by plugin)
+        self.data_manager = None
     
     def _setup_ui(self):
         """Setup the main UI."""
@@ -126,7 +130,7 @@ class DataImporterDialog(QDialog):
     def _create_header(self):
         """Create the header section."""
         header_layout = QHBoxLayout()
-        
+
         # Brand label
         brand_config = UI_CONFIG['brand_label']
         brand_label = QLabel(brand_config['text'])
@@ -134,24 +138,40 @@ class DataImporterDialog(QDialog):
         font.setBold(brand_config['bold'])
         font.setPointSize(brand_config['font_size'])
         brand_label.setFont(font)
-        
+
         header_layout.addWidget(brand_label)
+
+        # Add small spacing between brand label and role badge
+        header_layout.addSpacing(12)
+
+        # Role badge (initially hidden, shown after login) - positioned next to brand label
+        self.role_badge = QPushButton()
+        self.role_badge.setVisible(False)
+        self.role_badge.setCursor(QCursor(Qt.PointingHandCursor))
+        self.role_badge.setDefault(False)
+        self.role_badge.setAutoDefault(False)
+        self.role_badge.clicked.connect(self._show_role_info)
+        self.role_badge.setToolTip("Click to view your plan details")
+        # Style will be applied by _update_role_badge()
+        header_layout.addWidget(self.role_badge)
+
+        # Expand the space to push action buttons to the right
         header_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
-        
-        # Action buttons
+
+        # Action buttons on the right
         self.reset_all_button = QPushButton("Reset All")
         self.reset_all_button.setVisible(False)
         self.login_button = QPushButton("Login")
-        
+
         # Fix focus issues - prevent login button from stealing Enter key presses
         self.login_button.setDefault(False)
         self.login_button.setAutoDefault(False)
         self.reset_all_button.setDefault(False)
         self.reset_all_button.setAutoDefault(False)
-        
+
         header_layout.addWidget(self.reset_all_button)
         header_layout.addWidget(self.login_button)
-        
+
         self.main_layout.addLayout(header_layout)
     
     def _create_tabs(self):
@@ -270,15 +290,22 @@ class DataImporterDialog(QDialog):
 
             # Record count controls
             count_input = QLineEdit("100")
+            # Add validator for positive integers only
+            count_input.setValidator(QIntValidator(1, 999999999, count_input))
+            # Connect to role-based validation
+            count_input.textChanged.connect(lambda: self._validate_record_count(count_input, "Holes"))
+
             fetch_all_checkbox = QCheckBox("Fetch all records")
             fetch_all_checkbox.toggled.connect(count_input.setDisabled)
+            # Connect to custom handler for role-based restrictions
+            fetch_all_checkbox.toggled.connect(lambda checked: self._handle_fetch_all_toggled(checked, "Holes"))
 
             # Fetch location only checkbox with info icon
             fetch_location_only_checkbox = QCheckBox("Fetch Location Only")
 
             # Create info icon button for holes section
             holes_location_info_button = QPushButton("ℹ")
-            holes_location_info_button.setFixedSize(20, 20)
+            holes_location_info_button.setFixedSize(16, 16)
             holes_location_info_button.setToolTip("Click for information about Fetch Location Only")
             holes_location_info_button.setStyleSheet("""
                 QPushButton {
@@ -423,8 +450,15 @@ class DataImporterDialog(QDialog):
 
             # Record count controls
             count_input = QLineEdit("100")
+            # Add validator for positive integers only
+            count_input.setValidator(QIntValidator(1, 999999999, count_input))
+            # Connect to role-based validation
+            count_input.textChanged.connect(lambda: self._validate_record_count(count_input, "Assays"))
+
             fetch_all_checkbox = QCheckBox("Fetch all records")
             fetch_all_checkbox.toggled.connect(count_input.setDisabled)
+            # Connect to custom handler for role-based restrictions
+            fetch_all_checkbox.toggled.connect(lambda checked: self._handle_fetch_all_toggled(checked, "Assays"))
 
             # Fetch location only checkbox with info icon
             fetch_location_only_checkbox = QCheckBox("Fetch Location Only")
@@ -819,6 +853,227 @@ class DataImporterDialog(QDialog):
             layer_name, color = options_dialog.get_options()
             self.data_import_requested.emit(tab_name, layer_name, color)
     
+    def _show_role_info(self):
+        """Show detailed information about the user's current role/plan."""
+        if not self.data_manager or not self.data_manager.is_authenticated():
+            return
+
+        role = self.data_manager.api_client.get_user_role()
+        if not role or role not in ROLE_DESCRIPTIONS:
+            self.show_info("Your account information is being loaded...")
+            return
+
+        # Get role description
+        description = ROLE_DESCRIPTIONS[role]
+        display_name = ROLE_DISPLAY_NAMES.get(role, role)
+
+        # Show in a dialog
+        QMessageBox.information(self, f"Your Plan: {display_name}", description)
+
+    def _update_role_badge(self):
+        """Update the role badge display based on current user role."""
+        if not self.data_manager or not self.data_manager.is_authenticated():
+            self.role_badge.setVisible(False)
+            return
+
+        role = self.data_manager.api_client.get_user_role()
+        if not role or role not in ROLE_DISPLAY_NAMES:
+            self.role_badge.setVisible(False)
+            return
+
+        # Get display name
+        display_name = ROLE_DISPLAY_NAMES[role]
+        self.role_badge.setText(display_name)
+        self.role_badge.setVisible(True)
+
+        # Apply role-specific styling (smaller, compact design)
+        if role == "tier_1":
+            # Free Trial - Light blue/gray style
+            self.role_badge.setStyleSheet("""
+                QPushButton {
+                    background-color: #E3F2FD;
+                    color: #1976D2;
+                    border: 1px solid #64B5F6;
+                    border-radius: 4px;
+                    padding: 2px 6px;
+                    font-weight: bold;
+                    font-size: 10px;
+                    max-height: 18px;
+                }
+                QPushButton:hover {
+                    background-color: #BBDEFB;
+                    border-color: #1976D2;
+                }
+                QPushButton:pressed {
+                    background-color: #90CAF9;
+                }
+            """)
+        elif role == "tier_2":
+            # Premium - Gold/amber style
+            self.role_badge.setStyleSheet("""
+                QPushButton {
+                    background-color: #FFF3E0;
+                    color: #E65100;
+                    border: 1px solid #FFB74D;
+                    border-radius: 4px;
+                    padding: 2px 6px;
+                    font-weight: bold;
+                    font-size: 10px;
+                    max-height: 18px;
+                }
+                QPushButton:hover {
+                    background-color: #FFE0B2;
+                    border-color: #E65100;
+                }
+                QPushButton:pressed {
+                    background-color: #FFCC80;
+                }
+            """)
+        elif role == "admin":
+            # Admin - Purple style
+            self.role_badge.setStyleSheet("""
+                QPushButton {
+                    background-color: #F3E5F5;
+                    color: #6A1B9A;
+                    border: 1px solid #BA68C8;
+                    border-radius: 4px;
+                    padding: 2px 6px;
+                    font-weight: bold;
+                    font-size: 10px;
+                    max-height: 18px;
+                }
+                QPushButton:hover {
+                    background-color: #E1BEE7;
+                    border-color: #6A1B9A;
+                }
+                QPushButton:pressed {
+                    background-color: #CE93D8;
+                }
+            """)
+
+    def _validate_record_count(self, count_input: QLineEdit, tab_name: str):
+        """Validate record count input for tier_1 users (max 1000 records)."""
+        # Get the current text
+        text = count_input.text().strip()
+
+        # If empty or being edited, allow it
+        if not text:
+            count_input.setStyleSheet("")
+            return
+
+        # Try to parse the value
+        try:
+            value = int(text)
+
+            # Check if user is tier_1 and exceeds limit
+            if self.data_manager and self.data_manager.is_authenticated():
+                role = self.data_manager.api_client.get_user_role()
+
+                if role == "tier_1" and value > 1000:
+                    # Show error styling
+                    count_input.setStyleSheet("border: 2px solid #f44336; background-color: #ffebee;")
+
+                    # Reset to 1000
+                    count_input.blockSignals(True)
+                    count_input.setText("1000")
+                    count_input.blockSignals(False)
+
+                    # Show message (this blocks until user clicks OK)
+                    self.show_info(
+                        "Free Trial Record Limit Exceeded\n\n"
+                        "As a Free Trial user, you can fetch a maximum of 1,000 records at a time.\n\n"
+                        "Your entry has been adjusted to 1,000 records.\n\n"
+                        "Upgrade to Premium for unlimited record fetching!"
+                    )
+
+                    # Clear error styling immediately after user dismisses the popup
+                    count_input.setStyleSheet("")
+                else:
+                    # Valid input, clear any error styling
+                    count_input.setStyleSheet("")
+            else:
+                # Not logged in or not tier_1, clear any error styling
+                count_input.setStyleSheet("")
+
+        except ValueError:
+            # Invalid number, but let the QIntValidator handle it
+            pass
+
+    def _handle_fetch_all_toggled(self, checked: bool, tab_name: str):
+        """Handle fetch all checkbox toggle with role-based validation."""
+        if not checked:
+            return  # Allow unchecking
+
+        # Get the widgets
+        tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
+        fetch_all_checkbox = tab_widgets['fetch_all_checkbox']
+        count_input = tab_widgets['count_input']
+
+        # Check if user is logged in
+        if not self.data_manager or not self.data_manager.is_authenticated():
+            # Block the check and show message
+            fetch_all_checkbox.blockSignals(True)
+            fetch_all_checkbox.setChecked(False)
+            fetch_all_checkbox.blockSignals(False)
+            # Re-enable the count input field
+            count_input.setEnabled(True)
+            self.show_info("Please login before using 'Fetch all records'")
+            return
+
+        # Check if user has permission based on role
+        if not self.data_manager.api_client.can_fetch_all_records():
+            role = self.data_manager.api_client.get_user_role()
+            # Block the check and show message
+            fetch_all_checkbox.blockSignals(True)
+            fetch_all_checkbox.setChecked(False)
+            fetch_all_checkbox.blockSignals(False)
+            # Re-enable the count input field
+            count_input.setEnabled(True)
+
+            if role == "tier_1":
+                self.show_info(
+                    "Fetch All Records - Free Trial Limitation\n\n"
+                    "You are currently on Free Trial. On this tier, you can fetch a maximum of 1000 records at a time.\n\n"
+                    "To unlock unlimited record fetching, please upgrade to Premium by contacting Needle Digital."
+                )
+            else:
+                self.show_info("You don't have permission to fetch all records.")
+
+    def set_data_manager(self, data_manager):
+        """Set the data manager reference for role checks."""
+        self.data_manager = data_manager
+        # Update fetch all checkbox state based on role
+        self.update_fetch_all_permissions()
+
+    def update_fetch_all_permissions(self):
+        """Update fetch all checkbox state based on user role."""
+        # Check both tabs
+        for tab_name in ['Holes', 'Assays']:
+            tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
+            fetch_all_checkbox = tab_widgets['fetch_all_checkbox']
+
+            # Reset to unchecked and enabled by default
+            fetch_all_checkbox.setChecked(False)
+            fetch_all_checkbox.setEnabled(True)
+            fetch_all_checkbox.setToolTip("")
+
+            # If not logged in, keep enabled but show tooltip
+            if not self.data_manager or not self.data_manager.is_authenticated():
+                fetch_all_checkbox.setToolTip("Login required to fetch all records")
+                continue
+
+            # Check role-based permissions
+            role = self.data_manager.api_client.get_user_role()
+            can_fetch_all = self.data_manager.api_client.can_fetch_all_records()
+
+            if not can_fetch_all and role == "tier_1":
+                # Keep enabled but show tooltip - validation happens on click
+                fetch_all_checkbox.setToolTip(
+                    "Tier 1 (Trial): Limited to 1000 records per fetch. Upgrade to Tier 2 for unlimited fetching."
+                )
+            else:
+                fetch_all_checkbox.setToolTip("Fetch all available records matching the filters")
+
     def update_login_status(self, is_logged_in: bool, user_info: str = ""):
         """Update UI based on login status."""
         if is_logged_in:
@@ -828,10 +1083,22 @@ class DataImporterDialog(QDialog):
             if user_info:
                 status = f"Ready to fetch data. Logged in as {user_info}"
             self.status_label.setText(status)
+
+            # Update role badge after login
+            self._update_role_badge()
+
+            # Update fetch all checkbox permissions after login
+            self.update_fetch_all_permissions()
         else:
-            self.login_button.setText("Login") 
+            self.login_button.setText("Login")
             self.reset_all_button.setVisible(False)
             self.status_label.setText(UI_CONFIG['status_messages']['ready'])
+
+            # Hide role badge after logout
+            self.role_badge.setVisible(False)
+
+            # Update fetch all checkbox permissions after logout
+            self.update_fetch_all_permissions()
     
     def update_status(self, message: str):
         """Update status message."""
@@ -1245,6 +1512,7 @@ class DataImporterDialog(QDialog):
         # Reset record count and fetch all checkbox
         holes_tab['count_input'].setText("100")
         holes_tab['fetch_all_checkbox'].setChecked(False)
+        holes_tab['count_input'].setEnabled(True)  # Ensure count input is enabled
         holes_tab['fetch_location_only_checkbox'].setChecked(False)
         
         # Reset Assays tab filters  
@@ -1277,6 +1545,7 @@ class DataImporterDialog(QDialog):
         # Reset record count and fetch all checkbox
         assays_tab['count_input'].setText("100")
         assays_tab['fetch_all_checkbox'].setChecked(False)
+        assays_tab['count_input'].setEnabled(True)  # Ensure count input is enabled
         assays_tab['fetch_location_only_checkbox'].setChecked(False)
     
     def _on_company_search_text_changed(self, text: str):

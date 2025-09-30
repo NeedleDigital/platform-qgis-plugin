@@ -49,6 +49,7 @@ from qgis.core import QgsSettings
 # Internal configuration and utilities
 from ..config.settings import config  # API configuration and settings
 from ..utils.logging import log_error, log_warning  # Centralized logging system
+from ..utils.validation import get_user_role_from_token  # JWT token utilities
 
 
 class ApiClient(QObject):
@@ -89,6 +90,7 @@ class ApiClient(QObject):
         self.auth_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
         self.token_expires_at: float = 0
+        self.user_role: Optional[str] = None  # User role from token (tier_1, tier_2, admin)
         self._initialization_complete = False
         self._active_replies = []  # Track active network requests for cancellation
         
@@ -100,6 +102,10 @@ class ApiClient(QObject):
         settings = QgsSettings()
         self.refresh_token = settings.value("needle/refreshToken", None)
         self.auth_token = settings.value("needle/authToken", None)
+
+        # Extract role from stored token if available
+        if self.auth_token:
+            self.user_role = get_user_role_from_token(self.auth_token)
 
         # Safely load token expiration time
         try:
@@ -122,6 +128,27 @@ class ApiClient(QObject):
     def is_authenticated(self) -> bool:
         """Check if user is currently authenticated."""
         return bool(self.auth_token and time.time() < self.token_expires_at)
+
+    def get_user_role(self) -> Optional[str]:
+        """Get the current user's role."""
+        return self.user_role
+
+    def can_fetch_all_records(self) -> bool:
+        """Check if user has permission to fetch all records.
+
+        Returns:
+            True if user is tier_2, admin, or has no role restriction
+            False if user is tier_1 (trial tier)
+        """
+        if not self.is_authenticated():
+            return False
+
+        # tier_1 users cannot fetch all records
+        if self.user_role == "tier_1":
+            return False
+
+        # tier_2, admin, and users with no explicit role can fetch all
+        return True
     
     def login(self, email: str, password: str) -> None:
         """Authenticate user with email and password."""
@@ -149,6 +176,7 @@ class ApiClient(QObject):
         self.auth_token = None
         self.refresh_token = None
         self.token_expires_at = 0
+        self.user_role = None
         self.token_refresh_timer.stop()
 
         # Clear all stored tokens and expiration time
@@ -290,27 +318,30 @@ class ApiClient(QObject):
         try:
             self.auth_token = response_data.get("idToken")
             self.refresh_token = response_data.get("refreshToken")
-            
+
             if not self.auth_token or not self.refresh_token:
                 self.login_failed.emit("Could not retrieve authentication credentials.")
                 return
-            
+
+            # Extract user role from token
+            self.user_role = get_user_role_from_token(self.auth_token)
+
             # Calculate token expiration
             expires_in = int(response_data.get("expiresIn", 3600))
             self.token_expires_at = time.time() + expires_in
-            
+
             # Save tokens and expiration time
             settings = QgsSettings()
             settings.setValue("needle/refreshToken", self.refresh_token)
             settings.setValue("needle/authToken", self.auth_token)
             settings.setValue("needle/tokenExpiresAt", str(self.token_expires_at))
-            
+
             # Setup token refresh timer
             refresh_delay_ms = max(0, (expires_in - 60) * 1000)  # Refresh 1 minute before expiry
             self.token_refresh_timer.start(refresh_delay_ms)
-            
+
             self.login_success.emit()
-            
+
         except Exception as e:
             error_msg = f"Login processing error: {e}"
             log_error(error_msg)
@@ -322,29 +353,32 @@ class ApiClient(QObject):
             self.auth_token = response_data.get("access_token") or response_data.get("id_token")
             if response_data.get("refresh_token"):
                 self.refresh_token = response_data.get("refresh_token")
-            
+
             if self.auth_token:
+                # Extract user role from refreshed token
+                self.user_role = get_user_role_from_token(self.auth_token)
+
                 expires_in = int(response_data.get("expires_in", 3600))
                 self.token_expires_at = time.time() + expires_in
-                
+
                 # Save updated tokens and expiration time
                 settings = QgsSettings()
                 settings.setValue("needle/refreshToken", self.refresh_token)
                 settings.setValue("needle/authToken", self.auth_token)
                 settings.setValue("needle/tokenExpiresAt", str(self.token_expires_at))
-                
+
                 # Schedule next refresh
                 refresh_delay_ms = max(0, (expires_in - 60) * 1000)
                 self.token_refresh_timer.start(refresh_delay_ms)
-                
-                
+
+
                 # Emit login_success signal to update UI
                 self.login_success.emit()
             else:
                 log_error("Token refresh failed: No token in response")
                 # Emit login_failed signal to update UI
                 self.login_failed.emit("Token refresh failed")
-                
+
         except Exception as e:
             log_error(f"Token refresh processing error: {e}")
             # Emit login_failed signal to update UI
