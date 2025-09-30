@@ -2,7 +2,7 @@
 
 A comprehensive QGIS plugin for importing and visualizing Australian mining drill hole and assay data directly into your GIS projects.
 
-![Plugin Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Plugin Version](https://img.shields.io/badge/version-1.3.0-blue)
 ![QGIS Version](https://img.shields.io/badge/QGIS-3.0%2B-green)
 ![License](https://img.shields.io/badge/license-GPL--3.0-orange)
 
@@ -20,9 +20,14 @@ The ND Data Importer provides seamless access to Australia's comprehensive minin
 - 📊 **Large Dataset Support**: Optimized handling of datasets up to 1M+ records
 - 🗺️ **Auto Base Layer**: Automatic OpenStreetMap integration for spatial context
 - ⚡ **Performance Optimized**: Chunked processing with progress tracking
-- 💡 **Smart Hover Tooltips**: Hover over points to see company name and hole ID
+- 💡 **Smart Hover Tooltips**: Hover over points to see company name, hole ID, or collar ID
 - 🏠 **Adaptive Window Layout**: Full-height, 75% width window automatically centered to QGIS
 - 🎯 **User-friendly Interface**: Intuitive tabbed interface with real-time feedback
+- 👤 **Role-Based Access Control**: Tiered subscription plans (Free Trial, Premium, Admin)
+- 🔒 **Free Trial Limitations**: 1,000 record limit per fetch with upgrade prompts
+- 🏷️ **User Plan Badge**: Clickable badge showing current tier with detailed plan information
+- 📍 **Enhanced Location Data**: Latitude/longitude fields visible in Identify Results for location-only imports
+- ✅ **Smart Input Validation**: Real-time validation with visual feedback for record count limits
 
 ## 📁 Project Structure
 
@@ -123,6 +128,43 @@ cp -r platform-qgis-plugin needle-digital-importer
 2. Click the "Login" button in the dialog
 3. Enter your credentials received from Needle Digital
 4. Upon successful authentication, you can begin importing data
+5. Your subscription tier badge will appear in the top-left of the plugin window
+
+## 💳 Subscription Tiers
+
+The plugin supports three subscription tiers with different capabilities:
+
+### 🆓 Free Trial (Tier 1)
+- Access to Australian mining drill hole and assay data
+- State, company, and element filtering
+- **Maximum 1,000 records per fetch**
+- Cannot use "Fetch all records" feature
+- Ideal for: Exploration and small-scale projects
+
+### ⭐ Premium (Tier 2)
+- All Free Trial features
+- **Unlimited record fetching**
+- "Fetch all records" capability enabled
+- Advanced filtering options
+- Priority support
+- Ideal for: Professional mining operations and research
+
+### 👑 Admin (Tier 3)
+- All Premium features
+- Administrative privileges
+- Complete system access
+- Ideal for: Enterprise deployments and system administrators
+
+**To upgrade your subscription**, contact: divyansh@needle-digital.com
+
+### Role Badge
+
+After login, you'll see a colored badge next to the Needle Digital logo showing your current tier:
+- 🔵 **Blue Badge**: Free Trial
+- 🟡 **Gold Badge**: Premium
+- 🟣 **Purple Badge**: Admin
+
+Click the badge to view detailed information about your plan's features and limitations.
 
 ## 📊 Usage Guide
 
@@ -179,7 +221,13 @@ Upon successful import:
 
 - **Point Layers**: Drill holes and assay locations plotted as red points (size 2.0, 80% opacity)
 - **Base Map**: OpenStreetMap automatically added for geographical context
-- **Smart Hover Tooltips**: Hover over points to see company name and hole ID (non-location-only data)
+- **Smart Hover Tooltips**:
+  - **Full Data Mode**: Shows company name and hole ID (or collar ID as fallback)
+  - **Location-Only Mode**: Shows latitude and longitude coordinates
+  - Tooltips styled with white background and dark text for readability
+- **Identify Results**:
+  - **Location-Only Mode**: Latitude and longitude fields included in feature attributes
+  - **Full Data Mode**: All imported fields accessible via attribute inspection
 - **Adaptive Window**: Plugin window automatically sized to 75% width, full height, centered to QGIS
 - **Layer Management**: Automatic coordinate system handling (WGS84/EPSG:4326)
 - **Performance Optimization**: Auto-zoom disabled for datasets >50,000 records
@@ -436,7 +484,51 @@ We welcome contributions from the community!
 
 ## 🔄 Version History
 
-### v1.0.0 (Current) - Enhanced Edition
+### v1.3.0 (Current) - Role-Based Access Control Edition
+
+**New Role-Based Features:**
+- ✅ **Subscription Tiers**: Free Trial, Premium, and Admin tiers with different capabilities
+- ✅ **JWT Token Authentication**: Automatic role extraction from Firebase auth tokens
+- ✅ **Free Trial Limits**: 1,000 record maximum per fetch with real-time validation
+- ✅ **Role Badge Display**: Clickable badge showing user tier (Blue/Gold/Purple)
+- ✅ **Plan Information**: Detailed popup showing tier features and limitations
+- ✅ **Smart Restrictions**: Disabled "Fetch all records" for Free Trial with helpful messaging
+- ✅ **Input Validation**: Real-time record count validation with visual feedback
+
+**Enhanced Data Visualization:**
+- ✅ **Location-Only Improvements**: Latitude/longitude fields now visible in Identify Results
+- ✅ **Tooltip Styling**: Fixed location-only tooltips with white background and dark text
+- ✅ **Fallback Support**: Hover tooltips show collar_id when hole_id is empty/null
+- ✅ **QGIS Compatibility**: Fixed QgsField deprecation warnings (migrated to QMetaType.Type)
+
+**UI/UX Improvements:**
+- ✅ **Reset All Enhancement**: Properly re-enables record count field when resetting
+- ✅ **Checkbox Behavior**: Fixed text field staying disabled after blocking fetch all
+- ✅ **Error Messages**: User-friendly messages for all tier restrictions
+- ✅ **Visual Feedback**: Red field styling clears immediately after popup dismissal
+
+### v1.2.0 - Major UI/UX Enhancements and Authentication Improvements
+
+**UI/UX Features:**
+- ✅ Fixed critical dropdown focus issues with proper keyboard input handling
+- ✅ Implemented chip display limitations (max 4 + "view all" button)
+- ✅ Added searchable hole types dropdown with static data
+- ✅ Enhanced multi-selection with persistent popup behavior
+- ✅ Improved table display with N/A for null values and hover tooltips
+
+**Authentication Features:**
+- ✅ Fixed authentication token persistence across plugin sessions
+- ✅ Added automatic token validation on plugin open/focus
+- ✅ Implemented direct login dialog flow
+- ✅ Fixed incorrect logout messages
+
+### v1.1.0 - Enhanced UI/UX with Theme-Aware Styling
+
+- ✅ Comprehensive theme-aware button styling system
+- ✅ Automatic light/dark theme detection
+- ✅ Professional color scheme with improved readability
+
+### v1.0.0 - Initial Release
 
 **Core Features:**
 - ✅ Complete drill hole and assay data import functionality
@@ -444,22 +536,15 @@ We welcome contributions from the community!
 - ✅ Chemical element filtering for assays (112 elements supported)
 - ✅ Large dataset optimization (1M+ records with chunked processing)
 - ✅ Automatic OpenStreetMap base layer integration
-
-**New Enhanced Features:**
-- ✅ **Advanced Filtering**: Hole type filtering (RAB, RC, Diamond, AC) with API integration
-- ✅ **Depth Filtering**: Maximum depth filtering for drill hole data
-- ✅ **Smart Tooltips**: Hover tooltips showing company name and hole ID
-- ✅ **Adaptive UI**: Auto-sizing window (75% width, full height) centered to QGIS
-- ✅ **Improved UX**: Enhanced layout alignment and visual feedback
-- ✅ **Performance Optimization**: Location-only mode for large datasets
-- ✅ **Robust Error Handling**: Comprehensive error handling and user feedback
+- ✅ Advanced filtering (hole types, depth limits)
+- ✅ Smart hover tooltips and adaptive UI
 
 ### Planned Features
 
-- 🔄 **v1.1.0**: Advanced visualization modes (heatmaps, graduated symbols, categorized rendering)
-- 🔄 **v1.2.0**: Statistical analysis tools and multi-element analysis
-- 🔄 **v1.3.0**: 3D visualization and drill hole profiles
-- 🔄 **v1.4.0**: Data export capabilities and reporting tools
+- 🔄 **v1.4.0**: Advanced visualization modes (heatmaps, graduated symbols, categorized rendering)
+- 🔄 **v1.5.0**: Statistical analysis tools and multi-element analysis
+- 🔄 **v1.6.0**: 3D visualization and drill hole profiles
+- 🔄 **v1.7.0**: Enhanced data export capabilities and reporting tools
 
 ---
 
