@@ -68,13 +68,32 @@ class DataImporter:
     def __init__(self, iface):
         """
         Initialize the plugin.
-        
+
         Args:
             iface: A reference to the QgisInterface
         """
         self.iface = iface
         self.plugin_dir = os.path.dirname(__file__)
-        
+
+        # Check QGIS version compatibility
+        from qgis.core import Qgis
+        qgis_version_int = Qgis.QGIS_VERSION_INT
+        qgis_version_str = Qgis.QGIS_VERSION
+
+        # Log version information for debugging
+        from .src.utils.logging import log_info, log_warning, log_error
+        log_info("=" * 70)
+        log_info(f"ND Data Importer Plugin v{PLUGIN_VERSION} initializing...")
+        log_info(f"QGIS Version: {qgis_version_str} (int: {qgis_version_int})")
+
+        # Warn if QGIS version is below minimum requirement
+        if qgis_version_int < 30000:  # Less than 3.0.0
+            log_error("This plugin requires QGIS 3.0 or newer!")
+            log_error(f"Current version: {qgis_version_str}")
+        else:
+            log_info(f"QGIS version check passed (minimum: 3.0, current: {qgis_version_str})")
+        log_info("=" * 70)
+
         # Initialize locale - handle different QGIS versions robustly
         locale = 'en'  # Default fallback
         try:
@@ -96,7 +115,7 @@ class DataImporter:
         # Initialize components
         self.actions = []
         self.menu = self.tr(u'&Needle Digital Plugin')
-        
+
         # Core components
         self.data_manager = None
         self.layer_manager = None

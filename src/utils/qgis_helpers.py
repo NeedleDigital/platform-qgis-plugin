@@ -46,6 +46,8 @@ from ..config.constants import (
     OSM_LAYER_URL, AUTO_ZOOM_THRESHOLD
 )
 from .logging import log_error, log_warning
+# Import version compatibility utilities for QGIS 3.0+ support
+from .qgis_version_compat import create_qgs_field_compatible, get_qgis_version_int
 
 
 class QGISLayerManager:
@@ -151,14 +153,18 @@ class QGISLayerManager:
             return False, error_msg
     
     def _create_fields_from_data(self, sample_record: Dict[str, Any], is_location_only: bool = False) -> List[QgsField]:
-        """Create QGIS fields from sample data record.
+        """Create QGIS fields from sample data record with version compatibility.
+
+        This method automatically handles QgsField creation for different QGIS versions:
+        - QGIS 3.0-3.37: Uses QVariant.Type
+        - QGIS 3.38+: Uses QMetaType.Type
 
         Args:
             sample_record: Sample data record to extract field types from
             is_location_only: If True, include latitude/longitude as attributes
 
         Returns:
-            List of QgsField objects
+            List of QgsField objects compatible with current QGIS version
         """
         fields = []
 
@@ -172,21 +178,16 @@ class QGISLayerManager:
             if is_location_only and key.lower() == 'location_string':
                 continue
 
-            # Determine field type using QMetaType (non-deprecated method)
-            if isinstance(value, int):
-                field_type = QMetaType.Type.Int
-                type_name = "integer"
-            elif isinstance(value, float):
-                field_type = QMetaType.Type.Double
-                type_name = "double"
-            elif isinstance(value, bool):
-                field_type = QMetaType.Type.Bool
-                type_name = "boolean"
-            else:
-                field_type = QMetaType.Type.QString
-                type_name = "string"
-
-            fields.append(QgsField(key, field_type, type_name))
+            # Use version-compatible field creation
+            # This automatically selects QVariant or QMetaType based on QGIS version
+            try:
+                field = create_qgs_field_compatible(key, value)
+                fields.append(field)
+            except Exception as e:
+                # Log error but continue with other fields
+                log_error(f"Failed to create field '{key}' with value type {type(value).__name__}: {e}")
+                # Skip this field and continue processing others
+                continue
 
         return fields
     
