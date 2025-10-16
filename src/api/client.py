@@ -133,23 +133,6 @@ class ApiClient(QObject):
         """Get the current user's role."""
         return self.user_role
 
-    def can_fetch_all_records(self) -> bool:
-        """Check if user has permission to fetch all records.
-
-        Returns:
-            True if user is tier_2, admin, or has no role restriction
-            False if user is tier_1 (trial tier)
-        """
-        if not self.is_authenticated():
-            return False
-
-        # tier_1 users cannot fetch all records
-        if self.user_role == "tier_1":
-            return False
-
-        # tier_2, admin, and users with no explicit role can fetch all
-        return True
-    
     def login(self, email: str, password: str) -> None:
         """Authenticate user with email and password."""
         if not email or not password or not re.match(r"[^@]+@[^@]+\.[^@]+", email):

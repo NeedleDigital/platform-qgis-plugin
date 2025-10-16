@@ -35,11 +35,10 @@ from qgis.PyQt.QtCore import QObject, pyqtSignal
 # Internal imports for modular architecture
 from ..api.client import ApiClient  # HTTP client for API communication
 from ..config.constants import (
-    API_ENDPOINTS, API_FETCH_LIMIT, API_FETCH_LIMIT_LOCATION_ONLY,
+    API_ENDPOINTS, API_FETCH_LIMIT,
     VALIDATION_MESSAGES, DEFAULT_HOLE_TYPES
 )  # Configuration
 from ..config.settings import config  # Application settings
-from ..utils.validation import validate_fetch_all_request  # Request validation
 from ..utils.logging import log_api_request, log_api_response, log_error  # Logging utilities
 
 
@@ -100,8 +99,7 @@ class DataManager(QObject):
                 'total_records': 0,
                 'current_page': 0,
                 'records_per_page': 100,
-                'filter_params': {},
-                'is_location_only': False
+                'filter_params': {}
             },
             'Assays': {
                 'data': [],
@@ -109,8 +107,7 @@ class DataManager(QObject):
                 'total_records': 0,
                 'current_page': 0,
                 'records_per_page': 100,
-                'filter_params': {},
-                'is_location_only': False
+                'filter_params': {}
             }
         }
         
@@ -145,127 +142,52 @@ class DataManager(QObject):
         self.loading_finished.emit("Assays")
         
     
-    def fetch_data(self, tab_name: str, filter_params: Dict[str, Any], 
+    def fetch_data(self, tab_name: str, filter_params: Dict[str, Any],
                    fetch_all: bool = False) -> None:
         """
         Fetch data for specified tab.
-        
+
         Args:
             tab_name: 'Holes' or 'Assays'
             filter_params: Dictionary of filter parameters
-            fetch_all: Whether to fetch all available records
+            fetch_all: Whether to fetch all available records (always False now)
         """
         if not self.is_authenticated():
             # Instead of showing error message, trigger direct login dialog
             self.login_required.emit()
             return
-        
+
         # Emit loading started signal
         self.loading_started.emit(tab_name)
-        
+
         # Clear existing data but preserve filter_params
         self._clear_tab_data_only(tab_name)
-        
+
         # Store filter parameters after clearing data
         self.tab_states[tab_name]['filter_params'] = filter_params.copy()
 
-        # Store location-only flag
-        self.tab_states[tab_name]['is_location_only'] = filter_params.get('fetch_only_location', False)
-        
         # Set fetching state
         self._is_fetching = True
-        
+
         # Start timing
         self.fetch_start_time = time.time()
-        
-        if fetch_all:
-            # Validate fetch_all request
-            states_param = filter_params.get('states', "")
-            if states_param:
-                selected_states = [state.strip() for state in states_param.split(",")]
-            else:
-                selected_states = []  # "All States" case
-            
-            # Check if this is a location-only request
-            fetch_location_only = filter_params.get('fetch_only_location', False)
-            is_valid, error_msg = validate_fetch_all_request(selected_states, fetch_location_only)
 
-            if not is_valid:
-                self._is_fetching = False
-                self.loading_finished.emit(tab_name)
-                self.error_occurred.emit(error_msg)
-                return
-            
-            # For fetch_all: First get count, then fetch data
-            count_endpoint = API_ENDPOINTS['holes_count'] if tab_name == 'Holes' else API_ENDPOINTS['assays_count']
-            
-            log_api_request(count_endpoint, filter_params)
-            self.status_changed.emit("Calculating total available records...")
-            self.progress_changed.emit(1)
-            
-            self.api_client.make_api_request(
-                count_endpoint,
-                filter_params,
-                lambda data: self._handle_count_response(tab_name, data, fetch_all)
-            )
-        else:
-            # For specific count: Skip count API, directly calculate and fetch
-            requested_records = filter_params.get('requested_count', 100)
-            
-            # Set total_records to requested_records for pagination calculation
-            self.tab_states[tab_name]['total_records'] = requested_records
-            
-            self.status_changed.emit(f"Preparing to fetch {requested_records} records...")
-            self.progress_changed.emit(1)
-            
-            # Start direct fetch without count API
-            self._start_sequential_fetch(tab_name, requested_records)
-    
-    def _handle_count_response(self, tab_name: str, response_data: Dict[str, Any], 
-                              fetch_all: bool) -> None:
-        """Handle the response from count API."""
-        try:
-            
-            
-            total_count = int(response_data.get('total_count', 0))
-            self.tab_states[tab_name]['total_records'] = total_count
-            
-            log_api_response(f"{tab_name.lower()}_count", True, total_count)
-            
-            if total_count == 0:
-                self.progress_changed.emit(-1)  # Hide progress bar
-                self.status_changed.emit("No records found matching your criteria.")
-                pagination_info = self._get_pagination_info(tab_name)
-                self.data_ready.emit(tab_name, [], [], pagination_info)
-                self._is_fetching = False
-                self.loading_finished.emit(tab_name)
-                return
-            
-            # Determine how many records to fetch
-            if fetch_all:
-                records_to_fetch = total_count
-                self.status_changed.emit(f"Preparing to fetch all {total_count} records...")
-            else:
-                state = self.tab_states[tab_name]
-                records_to_fetch = min(total_count, state['records_per_page'])
-                self.status_changed.emit(f"Preparing to fetch {records_to_fetch} records...")
-            
-            # Start sequential fetch process
-            self._start_sequential_fetch(tab_name, records_to_fetch)
-            
-        except Exception as e:
-            error_msg = f"Failed to process count response: {e}"
-            log_error(error_msg)
-            self.error_occurred.emit(error_msg)
-            self._is_fetching = False
-            self.loading_finished.emit(tab_name)
+        # For specific count: Skip count API, directly calculate and fetch
+        requested_records = filter_params.get('requested_count', 100)
+
+        # Set total_records to requested_records for pagination calculation
+        self.tab_states[tab_name]['total_records'] = requested_records
+
+        self.status_changed.emit(f"Preparing to fetch {requested_records} records...")
+        self.progress_changed.emit(1)
+
+        # Start direct fetch without count API
+        self._start_sequential_fetch(tab_name, requested_records)
     
     def _start_sequential_fetch(self, tab_name: str, records_to_fetch: int) -> None:
         """Start the sequential data fetching process."""
-        # Determine the appropriate fetch limit based on fetch_only_location parameter
         base_params = self.tab_states[tab_name]['filter_params'].copy()
-        is_location_only = base_params.get('fetch_only_location', False)
-        current_fetch_limit = API_FETCH_LIMIT_LOCATION_ONLY if is_location_only else API_FETCH_LIMIT
+        current_fetch_limit = API_FETCH_LIMIT
 
         num_chunks = ceil(records_to_fetch / current_fetch_limit)
 
@@ -322,46 +244,23 @@ class DataManager(QObject):
         try:
             status = self.batch_fetch_status
             tab_name = status['tab_name']
-            
-            # Check if this is a location-only request
-            is_location_only = status['base_params'].get('fetch_only_location', False)
 
-            # Extract data based on tab_name and format
+            # Extract data based on tab_name
             if tab_name == "Holes":
                 chunk_data = response_data.get('holes', [])
             else:  # Assays
                 chunk_data = response_data.get('assays', [])
 
-            # Handle different data formats
+            # Generate headers from first record if we don't have them yet
             headers = []
-            if is_location_only:
-                # For location-only data, chunk_data is a list of "latitude,longitude" strings
-                # Convert to a consistent format for processing
-                if chunk_data:
-                    # Convert string coordinates to dictionaries for consistent processing
-                    converted_data = []
-                    for coord_str in chunk_data:
-                        if isinstance(coord_str, str) and ',' in coord_str:
-                            lat, lon = coord_str.split(',', 1)
-                            converted_data.append({
-                                'latitude': float(lat.strip()),
-                                'longitude': float(lon.strip()),
-                                'location_string': coord_str  # Keep original for reference
-                            })
-                    chunk_data = converted_data
-                    headers = ['latitude', 'longitude', 'location_string']
+            if chunk_data and not self.tab_states[tab_name]['headers']:
+                if isinstance(chunk_data[0], dict):
+                    headers = list(chunk_data[0].keys())
             else:
-                # Normal data format - generate headers from first record if we don't have them yet
-                if chunk_data and not self.tab_states[tab_name]['headers']:
-                    if isinstance(chunk_data[0], dict):
-                        headers = list(chunk_data[0].keys())
-                else:
-                    headers = self.tab_states[tab_name]['headers']
-            
-            
-            
-            # Store headers (from first chunk or when format changes)
-            if not self.tab_states[tab_name]['headers'] or is_location_only:
+                headers = self.tab_states[tab_name]['headers']
+
+            # Store headers from first chunk
+            if not self.tab_states[tab_name]['headers']:
                 self.tab_states[tab_name]['headers'] = headers
             
             # Append chunk data
@@ -450,10 +349,6 @@ class DataManager(QObject):
         state = self.tab_states[tab_name]
         return state['data'], state['headers']
 
-    def is_tab_location_only(self, tab_name: str) -> bool:
-        """Check if the tab data is location-only format."""
-        return self.tab_states[tab_name].get('is_location_only', False)
-    
     def clear_tab_data(self, tab_name: str) -> None:
         """Clear data for a tab."""
         self._clear_tab_data(tab_name)
@@ -472,18 +367,16 @@ class DataManager(QObject):
             'headers': [],
             'total_records': 0,
             'current_page': 0,
-            'filter_params': {},
-            'is_location_only': False
+            'filter_params': {}
         })
-    
+
     def _clear_tab_data_only(self, tab_name: str) -> None:
         """Internal method to clear tab data but preserve filter_params."""
         self.tab_states[tab_name].update({
             'data': [],
             'headers': [],
             'total_records': 0,
-            'current_page': 0,
-            'is_location_only': False  # Will be set from new filter_params
+            'current_page': 0
             # filter_params preserved
         })
     

@@ -79,23 +79,19 @@ NEEDLE_BASE_API_URL = "https://master.api.drh.needle-digital.com"
 
 # API Request Limits
 # Used in: src/core/data_manager.py for chunking API requests
-API_FETCH_LIMIT = 50000  # Maximum records per API request for full data
-API_FETCH_LIMIT_LOCATION_ONLY = 200000  # 4x limit for location-only requests (coordinates only)
+API_FETCH_LIMIT = 50000  # Maximum records per API request
 
 # Large Dataset Warning Thresholds
 # Used in: data_importer.py to show warning dialog before importing large datasets
-LARGE_IMPORT_WARNING_THRESHOLD = 50000  # Show warning above this count (full data)
-LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY = 200000  # Warning threshold for location-only data
+LARGE_IMPORT_WARNING_THRESHOLD = 50000  # Show warning above this count
 
 # Import Safety Limits
 # Used in: src/ui/components.py (LargeImportWarningDialog) for button styling and recommendations
-MAX_SAFE_IMPORT = 100000  # Mark "Import All" as not recommended above this count (full data)
-MAX_SAFE_IMPORT_LOCATION_ONLY = 400000  # Safe import limit for location-only data
+MAX_SAFE_IMPORT = 100000  # Mark "Import All" as not recommended above this count
 
 # Partial Import Limits
 # Used in: data_importer.py for "Import First X Records" functionality
-PARTIAL_IMPORT_LIMIT = 50000  # Maximum records for partial import (full data)
-PARTIAL_IMPORT_LIMIT_LOCATION_ONLY = 200000  # Maximum records for partial import (location-only)
+PARTIAL_IMPORT_LIMIT = 50000  # Maximum records for partial import
 
 # Performance Configuration
 # Used in: src/utils/qgis_helpers.py for chunked imports and performance optimization
@@ -196,8 +192,6 @@ UI_CONFIG = {
 # Validation messages
 VALIDATION_MESSAGES = {
     'auth_required': 'You must be logged in to fetch data.',
-    'fetch_all_no_state': 'Currenlty our plugin support fetching all data state-wise, due to memory issue of QGIS. Please select 1 state for which you want to fetch all data.\n\nNote - If you want all records for mutiple states you can enable - Fetch Location Only checkbox',
-    'fetch_all_multiple_states': 'Currenlty our plugin support fetching all data state-wise, due to memory issue of QGIS. Please select 1 state for which you want to fetch all data.\n\nNote - If you want all records for mutiple states you can enable - Fetch Location Only checkbox',
     'invalid_credentials': 'A valid email and password are required.',
     'network_error': 'Network error occurred. Please check your connection and try again.',
     'api_error': 'API request failed. Please try again later.',

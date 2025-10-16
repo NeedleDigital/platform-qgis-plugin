@@ -36,8 +36,7 @@ from .src.utils.qgis_helpers import QGISLayerManager  # QGIS integration utiliti
 from .src.utils.logging import log_error, log_warning  # Centralized logging system
 from .src.config.constants import (  # Configuration constants and thresholds
     PLUGIN_NAME, PLUGIN_VERSION, LARGE_IMPORT_WARNING_THRESHOLD,
-    LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY, PARTIAL_IMPORT_LIMIT,
-    PARTIAL_IMPORT_LIMIT_LOCATION_ONLY, CHUNKED_IMPORT_THRESHOLD
+    PARTIAL_IMPORT_LIMIT, CHUNKED_IMPORT_THRESHOLD
 )
 
 
@@ -437,9 +436,6 @@ class DataImporter:
             # Get data from data manager - includes both data rows and column headers
             data, headers = self.data_manager.get_tab_data(tab_name)
 
-            # Check if this is location-only data
-            is_location_only = self.data_manager.is_tab_location_only(tab_name)
-
             # Validate that we have data to import
             if not data:
                 self.dlg.show_error("No data available to import.")
@@ -456,12 +452,10 @@ class DataImporter:
                 pass
 
             # Large dataset detection - warn users about potential performance impact
-            # Use appropriate threshold based on data type (location-only has 4x higher threshold)
-            warning_threshold = LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY if is_location_only else LARGE_IMPORT_WARNING_THRESHOLD
             warning_dialog_shown = False
-            if record_count >= warning_threshold:
-                # Show warning dialog with location-only flag
-                warning_dialog = LargeImportWarningDialog(record_count, is_location_only, self.dlg)
+            if record_count >= LARGE_IMPORT_WARNING_THRESHOLD:
+                # Show warning dialog
+                warning_dialog = LargeImportWarningDialog(record_count, self.dlg)
                 result = warning_dialog.exec_()
                 warning_dialog_shown = True
 
@@ -473,18 +467,17 @@ class DataImporter:
                 if user_choice == LargeImportWarningDialog.CANCEL:
                     return
                 elif user_choice == LargeImportWarningDialog.IMPORT_PARTIAL:
-                    # Import only first records using appropriate limit for data type
-                    partial_limit = PARTIAL_IMPORT_LIMIT_LOCATION_ONLY if is_location_only else PARTIAL_IMPORT_LIMIT
-                    data = data[:partial_limit]
+                    # Import only first records
+                    data = data[:PARTIAL_IMPORT_LIMIT]
                     record_count = len(data)
                 # If IMPORT_ALL, continue with full dataset
 
             # Use chunked import for datasets > CHUNKED_IMPORT_THRESHOLD records
             if record_count > CHUNKED_IMPORT_THRESHOLD:
-                self._perform_chunked_import(data, layer_name, color, record_count, warning_dialog_shown, is_location_only)
+                self._perform_chunked_import(data, layer_name, color, record_count, warning_dialog_shown)
             else:
                 # Use regular import for small datasets
-                success, message = self.layer_manager.create_point_layer(layer_name, data, color, is_location_only)
+                success, message = self.layer_manager.create_point_layer(layer_name, data, color)
                 self._handle_import_result(success, message, warning_dialog_shown)
             
         except Exception as e:
@@ -492,22 +485,22 @@ class DataImporter:
             log_error(error_msg)
             self.dlg.show_error(error_msg)
     
-    def _perform_chunked_import(self, data, layer_name, color, record_count, warning_dialog_shown=False, is_location_only=False):
+    def _perform_chunked_import(self, data, layer_name, color, record_count, warning_dialog_shown=False):
         """Perform chunked import with progress dialog."""
         # Create progress dialog
         progress_dialog = ImportProgressDialog(record_count, self.dlg)
         progress_dialog.show()
-        
+
         # Define progress callback
         def progress_callback(processed_count, chunk_info):
             if progress_dialog.wasCanceled():
                 raise InterruptedError("Import cancelled by user")
             progress_dialog.update_progress(processed_count, chunk_info)
-        
+
         try:
             # Perform chunked import
             success, message = self.layer_manager.create_point_layer_chunked(
-                layer_name, data, color, progress_callback, is_location_only
+                layer_name, data, color, progress_callback
             )
             
             # Update final progress

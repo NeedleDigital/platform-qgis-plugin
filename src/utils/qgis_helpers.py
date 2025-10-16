@@ -90,7 +90,7 @@ class QGISLayerManager:
         self.iface = iface
     
     def create_point_layer(self, layer_name: str, data: List[Dict[str, Any]],
-                          color: Optional[QColor] = None, is_location_only: bool = False) -> Tuple[bool, str]:
+                          color: Optional[QColor] = None) -> Tuple[bool, str]:
         """
         Create a point layer from data.
 
@@ -98,7 +98,6 @@ class QGISLayerManager:
             layer_name: Name for the new layer
             data: List of dictionaries containing point data
             color: Point color (optional)
-            is_location_only: Whether this is location-only data (affects hover tooltips and field inclusion)
 
         Returns:
             Tuple of (success, message)
@@ -118,23 +117,22 @@ class QGISLayerManager:
             provider = layer.dataProvider()
 
             # Define fields based on first record
-            # For location-only data, include lat/lon as attributes
-            fields = self._create_fields_from_data(data[0], is_location_only)
+            fields = self._create_fields_from_data(data[0])
             provider.addAttributes(fields)
             layer.updateFields()
-            
+
             # Add features
             features = []
             for record in data:
                 feature = self._create_feature_from_record(record, layer.fields())
                 if feature:
                     features.append(feature)
-            
+
             provider.addFeatures(features)
             layer.updateExtents()
 
             # Apply styling
-            self._apply_layer_styling(layer, color, is_location_only)
+            self._apply_layer_styling(layer, color)
             
             # Add to project
             QgsProject.instance().addMapLayer(layer)
@@ -152,7 +150,7 @@ class QGISLayerManager:
             log_error(error_msg)
             return False, error_msg
     
-    def _create_fields_from_data(self, sample_record: Dict[str, Any], is_location_only: bool = False) -> List[QgsField]:
+    def _create_fields_from_data(self, sample_record: Dict[str, Any]) -> List[QgsField]:
         """Create QGIS fields from sample data record with version compatibility.
 
         This method automatically handles QgsField creation for different QGIS versions:
@@ -161,7 +159,6 @@ class QGISLayerManager:
 
         Args:
             sample_record: Sample data record to extract field types from
-            is_location_only: If True, include latitude/longitude as attributes
 
         Returns:
             List of QgsField objects compatible with current QGIS version
@@ -169,13 +166,8 @@ class QGISLayerManager:
         fields = []
 
         for key, value in sample_record.items():
-            # For location-only data, keep latitude and longitude as attributes
-            # For full data, skip coordinate fields as they're only used for geometry
-            if not is_location_only and key.lower() in ['latitude', 'longitude', 'lat', 'lon', 'x', 'y']:
-                continue
-
-            # Skip location_string for location-only data (not useful in identify results)
-            if is_location_only and key.lower() == 'location_string':
+            # Skip coordinate fields as they're only used for geometry
+            if key.lower() in ['latitude', 'longitude', 'lat', 'lon', 'x', 'y']:
                 continue
 
             # Use version-compatible field creation
@@ -247,7 +239,7 @@ class QGISLayerManager:
         
         return lat, lon
     
-    def _apply_layer_styling(self, layer: QgsVectorLayer, color: Optional[QColor] = None, is_location_only: bool = False):
+    def _apply_layer_styling(self, layer: QgsVectorLayer, color: Optional[QColor] = None):
         """Apply styling to the layer."""
         try:
             # Use provided color or default
@@ -264,10 +256,7 @@ class QGISLayerManager:
             layer.setRenderer(renderer)
 
             # Setup hover tooltips (map tips)
-            if is_location_only:
-                self._setup_location_tooltips(layer)
-            else:
-                self._setup_hover_tooltips(layer)
+            self._setup_hover_tooltips(layer)
 
             # Refresh layer
             layer.triggerRepaint()
@@ -514,8 +503,7 @@ class QGISLayerManager:
     
     def create_point_layer_chunked(self, layer_name: str, data: List[Dict[str, Any]],
                                   color: Optional[QColor] = None,
-                                  progress_callback: Optional[callable] = None,
-                                  is_location_only: bool = False) -> Tuple[bool, str]:
+                                  progress_callback: Optional[callable] = None) -> Tuple[bool, str]:
         """
         Create a point layer from large dataset using chunked processing.
 
@@ -524,7 +512,6 @@ class QGISLayerManager:
             data: List of dictionaries containing point data
             color: Point color (optional)
             progress_callback: Function to call with progress updates (processed_count, chunk_info)
-            is_location_only: Whether this is location-only data (affects hover tooltips and field inclusion)
 
         Returns:
             Tuple of (success, message)
@@ -546,8 +533,7 @@ class QGISLayerManager:
             provider = layer.dataProvider()
 
             # Define fields based on first record
-            # For location-only data, include lat/lon as attributes
-            fields = self._create_fields_from_data(data[0], is_location_only)
+            fields = self._create_fields_from_data(data[0])
             provider.addAttributes(fields)
             layer.updateFields()
             
@@ -599,7 +585,7 @@ class QGISLayerManager:
             layer.updateExtents()
 
             # Apply styling
-            self._apply_layer_styling(layer, color, is_location_only)
+            self._apply_layer_styling(layer, color)
             
             # Add to project
             QgsProject.instance().addMapLayer(layer)

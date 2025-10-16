@@ -13,8 +13,7 @@ from qgis.PyQt.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize, QEvent, QTime
 
 from ..utils.logging import log_info, log_error, log_warning, log_debug
 from ..config.constants import (
-    MAX_SAFE_IMPORT, PARTIAL_IMPORT_LIMIT,
-    MAX_SAFE_IMPORT_LOCATION_ONLY, PARTIAL_IMPORT_LIMIT_LOCATION_ONLY
+    MAX_SAFE_IMPORT, PARTIAL_IMPORT_LIMIT
 )
 
 
@@ -1001,19 +1000,18 @@ class LargeImportWarningDialog(QDialog):
     IMPORT_PARTIAL = 2
     CANCEL = 0
     
-    def __init__(self, record_count: int, is_location_only: bool = False, parent=None):
+    def __init__(self, record_count: int, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Large Dataset Import Warning")
         self.setModal(True)
         self.setMinimumWidth(450)
 
         self.record_count = record_count
-        self.is_location_only = is_location_only
         self.user_choice = self.CANCEL
 
-        # Use appropriate limits based on data type
-        self.max_safe_import = MAX_SAFE_IMPORT_LOCATION_ONLY if is_location_only else MAX_SAFE_IMPORT
-        self.partial_limit = PARTIAL_IMPORT_LIMIT_LOCATION_ONLY if is_location_only else PARTIAL_IMPORT_LIMIT
+        # Use standard limits
+        self.max_safe_import = MAX_SAFE_IMPORT
+        self.partial_limit = PARTIAL_IMPORT_LIMIT
         
         # Main layout
         layout = QVBoxLayout(self)
