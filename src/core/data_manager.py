@@ -35,11 +35,12 @@ from qgis.PyQt.QtCore import QObject, pyqtSignal
 # Internal imports for modular architecture
 from ..api.client import ApiClient  # HTTP client for API communication
 from ..config.constants import (
-    API_ENDPOINTS, API_FETCH_LIMIT,
-    VALIDATION_MESSAGES, DEFAULT_HOLE_TYPES
+    API_ENDPOINTS,
+    VALIDATION_MESSAGES, DEFAULT_HOLE_TYPES,
+    MAX_DISPLAY_RECORDS
 )  # Configuration
 from ..config.settings import config  # Application settings
-from ..utils.logging import log_api_request, log_api_response, log_error  # Logging utilities
+from ..utils.logging import log_api_request, log_api_response, log_error, log_info  # Logging utilities
 
 
 class DataManager(QObject):
@@ -110,9 +111,9 @@ class DataManager(QObject):
                 'filter_params': {}
             }
         }
-        
-        # Batch fetching state
-        self.batch_fetch_status = None
+
+        # Streaming state (replaces batch_fetch_status)
+        self.streaming_state = None
         self.fetch_start_time = 0
         self._is_fetching = False  # Track if currently fetching data
     
@@ -126,20 +127,34 @@ class DataManager(QObject):
             return
         
         
-        # Cancel all active network requests
-        self.api_client.cancel_all_requests()
-        
-        # Reset batch fetching state
-        self.batch_fetch_status = None
-        self._is_fetching = False
-        
-        # Reset progress and status
-        self.progress_changed.emit(-1)  # Hide progress bar on cancel
-        self.status_changed.emit("Request cancelled by user.")
-        
-        # Emit loading finished signal for both tabs since we cancelled all requests
-        self.loading_finished.emit("Holes")
-        self.loading_finished.emit("Assays")
+        # Cancel streaming request if active
+        if self.streaming_state and self.streaming_state.get('reply'):
+            reply = self.streaming_state['reply']
+            tab_name = self.streaming_state.get('tab_name', 'Holes')
+
+            # Abort the network request
+            self.api_client.cancel_streaming_request(reply)
+
+            # Clear state
+            self.streaming_state = None
+            self._is_fetching = False
+
+            # Update UI
+            self.progress_changed.emit(-1)  # Hide progress bar
+            self.status_changed.emit("Fetch cancelled by user")
+            self.loading_finished.emit(tab_name)
+        else:
+            # Fallback: cancel any active requests and clear states
+            self.api_client.cancel_all_requests()
+            self._is_fetching = False
+            self.streaming_state = None
+
+            self.progress_changed.emit(-1)  # Hide progress bar
+            self.status_changed.emit("Request cancelled by user.")
+
+            # Emit loading finished signal for both tabs
+            self.loading_finished.emit("Holes")
+            self.loading_finished.emit("Assays")
         
     
     def fetch_data(self, tab_name: str, filter_params: Dict[str, Any],
@@ -172,177 +187,208 @@ class DataManager(QObject):
         # Start timing
         self.fetch_start_time = time.time()
 
-        # For specific count: Skip count API, directly calculate and fetch
+        # Get requested count
         requested_records = filter_params.get('requested_count', 100)
 
         # Set total_records to requested_records for pagination calculation
         self.tab_states[tab_name]['total_records'] = requested_records
 
-        self.status_changed.emit(f"Preparing to fetch {requested_records} records...")
+        self.status_changed.emit(f"Preparing to stream {requested_records:,} records...")
         self.progress_changed.emit(1)
 
-        # Start direct fetch without count API
-        self._start_sequential_fetch(tab_name, requested_records)
+        # Start streaming fetch
+        self._start_streaming_fetch(tab_name, requested_records)
     
-    def _start_sequential_fetch(self, tab_name: str, records_to_fetch: int) -> None:
-        """Start the sequential data fetching process."""
+    def _start_streaming_fetch(self, tab_name: str, requested_count: int) -> None:
+        """Initiate SSE streaming request for data."""
+        # Prepare parameters for new streaming API
         base_params = self.tab_states[tab_name]['filter_params'].copy()
-        current_fetch_limit = API_FETCH_LIMIT
 
-        num_chunks = ceil(records_to_fetch / current_fetch_limit)
+        # Add required total_count parameter
+        base_params['total_count'] = requested_count
 
-        self.batch_fetch_status = {
-            "tab_name": tab_name,
-            "total_chunks": num_chunks,
-            "records_to_fetch": records_to_fetch,
-            "next_chunk_index": 0,
-            "all_data": [],
-            "base_params": base_params,
-            "current_fetch_limit": current_fetch_limit  # Store the fetch limit for chunk processing
+        # Remove old pagination params that don't exist in streaming API
+        base_params.pop('limit', None)
+        base_params.pop('skip', None)
+        base_params.pop('requested_count', None)
+        base_params.pop('fetch_all_records', None)
+        base_params.pop('fetch_only_location', None)
+
+        # Select appropriate endpoint
+        endpoint = API_ENDPOINTS['holes_data'] if tab_name == 'Holes' else API_ENDPOINTS['assays_data']
+
+        # Initialize streaming state
+        self.streaming_state = {
+            'tab_name': tab_name,
+            'all_data': [],
+            'total_target': requested_count,
+            'columns': None,  # Will be set from complete event
+            'reply': None
         }
-        
-        self.status_changed.emit(f"Fetching data in {num_chunks} chunks...")
-        self._fetch_next_chunk()
-    
-    def _fetch_next_chunk(self) -> None:
-        """Fetch the next chunk of data."""
-        if not self.batch_fetch_status:
-            return
-        
-        status = self.batch_fetch_status
-        chunk_index = status['next_chunk_index']
-        tab_name = status['tab_name']
-        
-        # Prepare chunk parameters
-        data_endpoint = API_ENDPOINTS['holes_data'] if tab_name == 'Holes' else API_ENDPOINTS['assays_data']
-        chunk_params = status['base_params'].copy()
-        
-        # Use the appropriate fetch limit for this request
-        current_fetch_limit = status['current_fetch_limit']
-        remaining_records = status['records_to_fetch'] - len(status['all_data'])
-        chunk_params['limit'] = min(current_fetch_limit, remaining_records)
-        chunk_params['skip'] = chunk_index * current_fetch_limit
-        
-        # Update progress from 1% to 98% (leave 2% for final processing)
-        progress = 1 + int((chunk_index / status['total_chunks']) * 97)
-        self.progress_changed.emit(progress)
-        self.status_changed.emit(f"Fetching chunk {chunk_index + 1} of {status['total_chunks']}...")
-        
-        log_api_request(data_endpoint, chunk_params)
-        
-        self.api_client.make_api_request(
-            data_endpoint,
-            chunk_params,
-            lambda data: self._handle_chunk_response(data)
+
+        # Start streaming
+        log_info(f"Starting streaming fetch for {tab_name}: {requested_count:,} records")
+        reply = self.api_client.make_streaming_request(
+            endpoint=endpoint,
+            params=base_params,
+            data_callback=self._handle_streaming_data,
+            progress_callback=self._handle_streaming_progress,
+            complete_callback=self._handle_streaming_complete,
+            error_callback=self._handle_streaming_error
         )
+
+        self.streaming_state['reply'] = reply
     
-    def _handle_chunk_response(self, response_data: Dict[str, Any]) -> None:
-        """Handle response from data chunk API."""
-        if not self.batch_fetch_status:
+    def _handle_streaming_data(self, event_data: dict) -> None:
+        """Process incoming data batch from SSE stream."""
+        print(f"\n=== _handle_streaming_data called ===")
+        print(f"Event data keys: {event_data.keys() if isinstance(event_data, dict) else 'NOT A DICT'}")
+        log_info(f"=== _handle_streaming_data called ===")
+        log_info(f"Event data keys: {event_data.keys() if isinstance(event_data, dict) else 'NOT A DICT'}")
+
+        if not self.streaming_state:
+            print("ERROR: streaming_state is None in _handle_streaming_data")
+            log_error("ERROR: streaming_state is None in _handle_streaming_data")
             return
-        
-        try:
-            status = self.batch_fetch_status
-            tab_name = status['tab_name']
 
-            # Extract data based on tab_name
-            if tab_name == "Holes":
-                chunk_data = response_data.get('holes', [])
-            else:  # Assays
-                chunk_data = response_data.get('assays', [])
+        tab_name = self.streaming_state['tab_name']
+        print(f"Processing data for tab: {tab_name}")
+        log_info(f"Processing data for tab: {tab_name}")
 
-            # Generate headers from first record if we don't have them yet
-            headers = []
-            if chunk_data and not self.tab_states[tab_name]['headers']:
-                if isinstance(chunk_data[0], dict):
-                    headers = list(chunk_data[0].keys())
-            else:
-                headers = self.tab_states[tab_name]['headers']
+        # Extract records based on tab
+        if tab_name == 'Holes':
+            records = event_data.get('holes', [])
+            print(f"Extracted {len(records)} holes from event")
+            log_info(f"Extracted {len(records)} holes from event")
+        else:  # Assays
+            records = event_data.get('assays', [])  # API sends 'assays', not 'samples'
+            print(f"Extracted {len(records)} assays from event")
+            log_info(f"Extracted {len(records)} assays from event")
 
-            # Store headers from first chunk
-            if not self.tab_states[tab_name]['headers']:
-                self.tab_states[tab_name]['headers'] = headers
-            
-            # Append chunk data
-            status['all_data'].extend(chunk_data)
-            status['next_chunk_index'] += 1
-            
-            log_api_response(f"{tab_name.lower()}_data_chunk", True, len(chunk_data))
-            
-            # Check if we're done or if API returned empty results (no more data available)
-            if (len(chunk_data) == 0 or  # Empty response - no more data available
-                status['next_chunk_index'] >= status['total_chunks'] or 
-                len(status['all_data']) >= status['records_to_fetch']):
-                
-                if len(chunk_data) == 0:
-                        self.status_changed.emit(f"No more data available. Fetched {len(status['all_data'])} records.")
-                
-                self._finalize_data_fetch()
-            else:
-                # Fetch next chunk
-                self._fetch_next_chunk()
-                
-        except Exception as e:
-            error_msg = f"Failed to process chunk response: {e}"
-            log_error(error_msg)
-            self.error_occurred.emit(error_msg)
-            
-            # Get tab_name before clearing batch_fetch_status
-            tab_name = self.batch_fetch_status['tab_name'] if self.batch_fetch_status else None
-            
-            self.batch_fetch_status = None
-            self._is_fetching = False
-            
-            if tab_name:
-                self.loading_finished.emit(tab_name)
-            else:
-                # Emit for both tabs as fallback
-                self.loading_finished.emit("Holes")
-                self.loading_finished.emit("Assays")
-    
-    def _finalize_data_fetch(self) -> None:
-        """Finalize the data fetching process."""
-        if not self.batch_fetch_status:
+        # Accumulate all data
+        self.streaming_state['all_data'].extend(records)
+
+        # Log receipt
+        total_accumulated = len(self.streaming_state['all_data'])
+        print(f"Received {len(records)} records via stream (total accumulated: {total_accumulated:,})")
+        log_info(f"Received {len(records)} records via stream (total accumulated: {total_accumulated:,})")
+
+    def _handle_streaming_progress(self, progress_data: dict) -> None:
+        """Update UI with real-time progress from SSE stream."""
+        print(f"\n=== _handle_streaming_progress called ===")
+        print(f"Progress data: {progress_data}")
+        log_info(f"=== _handle_streaming_progress called ===")
+        log_info(f"Progress data: {progress_data}")
+
+        fetched = progress_data.get('fetched', 0)
+        target = progress_data.get('target', 1)
+        percentage = progress_data.get('percentage', 0)
+
+        print(f"Progress: {fetched}/{target} ({percentage}%)")
+        log_info(f"Progress: {fetched}/{target} ({percentage}%)")
+
+        # Emit progress (0-100)
+        self.progress_changed.emit(int(percentage))
+
+        # Update status with streaming icon
+        self.status_changed.emit(f"📡 Streaming data: {fetched:,} / {target:,} records ({percentage:.1f}%)")
+
+    def _handle_streaming_complete(self, complete_data: dict) -> None:
+        """Finalize streaming and prepare data for display."""
+        print(f"\n=== _handle_streaming_complete called ===")
+        print(f"Complete data keys: {complete_data.keys() if isinstance(complete_data, dict) else 'NOT A DICT'}")
+        print(f"Complete data: {complete_data}")
+        log_info(f"=== _handle_streaming_complete called ===")
+        log_info(f"Complete data keys: {complete_data.keys() if isinstance(complete_data, dict) else 'NOT A DICT'}")
+        log_info(f"Complete data: {complete_data}")
+
+        if not self.streaming_state:
+            print("ERROR: streaming_state is None in _handle_streaming_complete")
+            log_error("ERROR: streaming_state is None in _handle_streaming_complete")
             return
-        
+
         try:
-            status = self.batch_fetch_status
-            tab_name = status['tab_name']
-            
-            # Store final data
-            self.tab_states[tab_name]['data'] = status['all_data']
-            
+            tab_name = self.streaming_state['tab_name']
+            all_data = self.streaming_state['all_data']
+
+            print(f"Tab: {tab_name}, Total accumulated data: {len(all_data)} records")
+            log_info(f"Tab: {tab_name}, Total accumulated data: {len(all_data)} records")
+
+            # CRITICAL: Get columns from complete event (not from data records)
+            columns = complete_data.get('columns', [])
+            total_fetched = complete_data.get('total_fetched', len(all_data))
+            state_contributions = complete_data.get('state_contributions', {})
+
+            print(f"Columns from complete event: {columns}")
+            print(f"Total fetched: {total_fetched}")
+            log_info(f"Columns from complete event: {columns}")
+            log_info(f"Total fetched: {total_fetched}")
+
+            # Store data and headers
+            self.tab_states[tab_name]['data'] = all_data
+            self.tab_states[tab_name]['headers'] = columns
+            self.tab_states[tab_name]['total_records'] = total_fetched
+
+            print(f"Stored {len(all_data)} records and {len(columns)} columns in tab state")
+            log_info(f"Stored {len(all_data)} records and {len(columns)} columns in tab state")
+
             # Calculate fetch time
             fetch_time = time.time() - self.fetch_start_time
-            record_count = len(status['all_data'])
-            
-            # Update UI
-            self.progress_changed.emit(100)
-            self.status_changed.emit(f"Data fetch complete: {record_count} records in {fetch_time:.1f}s")
-            
-            # Emit data ready signal with pagination info
-            pagination_info = self._get_pagination_info(tab_name)
-            final_headers = self.tab_states[tab_name]['headers']
-            final_data = self.tab_states[tab_name]['data']
 
+            # Log completion with state breakdown
+            print(f"Streaming complete: {total_fetched:,} records fetched in {fetch_time:.1f}s")
+            print(f"State contributions: {state_contributions}")
+            log_info(f"Streaming complete: {total_fetched:,} records fetched in {fetch_time:.1f}s")
+            log_info(f"State contributions: {state_contributions}")
 
-            self.data_ready.emit(
-                tab_name,
-                final_data,
-                final_headers,
-                pagination_info
-            )
-            
-            
-        except Exception as e:
-            error_msg = f"Failed to finalize data fetch: {e}"
-            log_error(error_msg)
-            self.error_occurred.emit(error_msg)
-        finally:
-            self.batch_fetch_status = None
+            # Clear streaming state
+            self.streaming_state = None
             self._is_fetching = False
-            # Emit loading finished signal
+
+            # Emit completion
+            self.progress_changed.emit(100)
+            self.status_changed.emit(f"✓ Successfully fetched {total_fetched:,} records in {fetch_time:.1f}s")
+
+            # Send data to UI
+            pagination_info = self._get_pagination_info(tab_name)
+            print(f"Pagination info: {pagination_info}")
+            print(f"Emitting data_ready with {len(all_data)} records and {len(columns)} columns")
+            log_info(f"Pagination info: {pagination_info}")
+            log_info(f"Emitting data_ready with {len(all_data)} records and {len(columns)} columns")
+            self.data_ready.emit(tab_name, all_data, columns, pagination_info)
             self.loading_finished.emit(tab_name)
+
+        except Exception as e:
+            error_msg = f"Failed to finalize streaming: {e}"
+            log_error(error_msg)
+            import traceback
+            log_error(traceback.format_exc())
+            self.error_occurred.emit(error_msg)
+
+            if self.streaming_state:
+                tab_name = self.streaming_state['tab_name']
+                self.streaming_state = None
+                self._is_fetching = False
+                self.loading_finished.emit(tab_name)
+
+    def _handle_streaming_error(self, error_data: dict) -> None:
+        """Handle streaming errors from SSE stream."""
+        log_error(f"=== _handle_streaming_error called ===")
+        log_error(f"Error data: {error_data}")
+
+        error_msg = error_data.get('error', 'Unknown streaming error')
+
+        # Cleanup
+        if self.streaming_state:
+            tab_name = self.streaming_state['tab_name']
+            self.streaming_state = None
+            self._is_fetching = False
+            self.loading_finished.emit(tab_name)
+
+        # Emit error
+        self.error_occurred.emit(error_msg)
+        self.progress_changed.emit(-1)  # Hide progress bar
+        log_error(f"Streaming error: {error_msg}")
     
     def get_tab_data(self, tab_name: str) -> tuple:
         """Get data and headers for a tab."""
@@ -389,24 +435,22 @@ class DataManager(QObject):
         """Handle API error signals."""
         log_error(f"API Error for {endpoint}: {error_message}")
         self.error_occurred.emit(f"API request failed: {error_message}")
-        
-        # Reset batch fetch status on error
-        if self.batch_fetch_status:
-            self.batch_fetch_status = None
-        
+
+        # Reset streaming state on error
+        if self.streaming_state:
+            tab_name = self.streaming_state.get('tab_name', 'Holes')
+            self.streaming_state = None
+            self.loading_finished.emit(tab_name)
+
         self._is_fetching = False
         self.progress_changed.emit(-1)  # Hide progress bar on error
         self.status_changed.emit("Ready for next request.")
-        
-        # Emit loading finished signal for both tabs since we don't know which one failed
-        self.loading_finished.emit("Holes")
-        self.loading_finished.emit("Assays")
     
     def _get_pagination_info(self, tab_name: str) -> dict:
         """Calculate pagination information for a tab (table-based pagination, 100 records per page)."""
         state = self.tab_states[tab_name]
         data_count = len(state['data'])
-        
+
         if data_count == 0:
             return {
                 'current_page': 0,
@@ -416,18 +460,23 @@ class DataManager(QObject):
                 'showing_records': 0,
                 'has_data': False
             }
-        
+
+        # IMPORTANT: Only show up to MAX_DISPLAY_RECORDS (1000) in table
+        # Calculate pages based on min(data_count, MAX_DISPLAY_RECORDS)
+        display_count = min(data_count, MAX_DISPLAY_RECORDS)
+
         # Table-based pagination: 100 records per page in the table display
         records_per_table_page = 100
-        total_pages = max(1, (data_count + records_per_table_page - 1) // records_per_table_page)
+        total_pages = max(1, (display_count + records_per_table_page - 1) // records_per_table_page)
         current_page = state['current_page'] + 1  # Convert from 0-based to 1-based
-        
+
         return {
             'current_page': current_page,
             'total_pages': total_pages,
             'records_per_table_page': records_per_table_page,
-            'total_records': data_count,
-            'showing_records': min(records_per_table_page, data_count - (current_page - 1) * records_per_table_page),
+            'total_records': data_count,  # Actual total (may be > 1000)
+            'display_count': display_count,  # What's shown in table (max 1000)
+            'showing_records': min(records_per_table_page, display_count - (current_page - 1) * records_per_table_page),
             'has_data': True
         }
     

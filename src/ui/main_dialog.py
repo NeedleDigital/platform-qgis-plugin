@@ -45,8 +45,8 @@ from .components import (
     LoginDialog, LayerOptionsDialog, LargeImportWarningDialog, ImportProgressDialog, MessageBar
 )
 from ..config.constants import (
-    AUSTRALIAN_STATES, CHEMICAL_ELEMENTS, COMPARISON_OPERATORS, UI_CONFIG,DEFAULT_HOLE_TYPES, ROLE_DISPLAY_NAMES,
-    ROLE_DESCRIPTIONS
+    AUSTRALIAN_STATES, CHEMICAL_ELEMENTS, COMPARISON_OPERATORS, UI_CONFIG, DEFAULT_HOLE_TYPES, ROLE_DISPLAY_NAMES,
+    ROLE_DESCRIPTIONS, MAX_DISPLAY_RECORDS
 )
 from ..utils.logging import log_warning, log_error
 
@@ -1040,12 +1040,16 @@ class DataImporterDialog(QDialog):
         page_label = tab_widgets['page_label']
         
         if data:
+            # Limit table display to first MAX_DISPLAY_RECORDS for performance
+            total_records = len(data)
+            display_data = data[:MAX_DISPLAY_RECORDS]
+
             # Calculate which data to show for current page (100 records max per page)
             records_per_page = 100
             current_page = pagination_info.get('current_page', 1)
             start_idx = (current_page - 1) * records_per_page
-            end_idx = min(start_idx + records_per_page, len(data))
-            page_data = data[start_idx:end_idx]
+            end_idx = min(start_idx + records_per_page, len(display_data))
+            page_data = display_data[start_idx:end_idx]
             
             # Enhanced table display with better UX
             table.setRowCount(len(page_data))
@@ -1100,9 +1104,16 @@ class DataImporterDialog(QDialog):
             if pagination_info['has_data'] and pagination_info['total_pages'] > 1:
                 pagination_widget.setVisible(True)
                 page_text = f"Page {pagination_info['current_page']} of {pagination_info['total_pages']}"
-                page_text += f" (showing {pagination_info['total_records']} records)"
+
+                # Add display limit info if applicable
+                if total_records > MAX_DISPLAY_RECORDS:
+                    page_text += f" (showing first {MAX_DISPLAY_RECORDS:,} rows)\n    Total rows fetched: {total_records:,}"
+                else:
+                    page_text += f" (showing {pagination_info['total_records']:,} records)"
+
                 page_label.setText(page_text)
-                
+                page_label.setAlignment(Qt.AlignCenter)
+
                 # Enable/disable navigation buttons
                 prev_button.setEnabled(pagination_info['current_page'] > 1)
                 next_button.setEnabled(pagination_info['current_page'] < pagination_info['total_pages'])

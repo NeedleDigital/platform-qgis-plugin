@@ -75,11 +75,12 @@ ROLE_DESCRIPTIONS = {
 
 # API Configuration
 NEEDLE_FIREBASE_API_KEY = "AIzaSyCuX5I0TaQCVmIUVdo1uM_aOQ3zVkrUV8Y"
-NEEDLE_BASE_API_URL = "https://master.api.drh.needle-digital.com"
+NEEDLE_BASE_API_URL = "https://master.api.agni.needle-digital.com"
 
-# API Request Limits
-# Used in: src/core/data_manager.py for chunking API requests
-API_FETCH_LIMIT = 50000  # Maximum records per API request
+# Streaming Configuration
+# Used in: src/ui/main_dialog.py for limiting table display
+MAX_DISPLAY_RECORDS = 1000  # Only show first 1K records in table for performance
+STREAMING_BUFFER_SIZE = 8192  # Bytes for SSE parsing buffer
 
 # Large Dataset Warning Thresholds
 # Used in: data_importer.py to show warning dialog before importing large datasets
@@ -153,10 +154,9 @@ COMPARISON_OPERATORS: List[str] = ['>', '<', '=', '!=', '>=', '<=']
 
 # API endpoints
 API_ENDPOINTS = {
-    'holes_count': 'plugin/fetch_dh_count',
-    'holes_data': 'plugin/fetch_drill_holes',
-    'assays_count': 'plugin/fetch_assay_count',
-    'assays_data': 'plugin/fetch_assay_samples',
+    # V2 Streaming APIs
+    'holes_data': 'plugin/v2/fetch_drill_holes',
+    'assays_data': 'plugin/v2/fetch_assay_samples',
     'companies_search': 'companies/search',
 }
 

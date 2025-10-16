@@ -41,6 +41,7 @@ Contact: divyansh@needle-digital.com
 import json
 import time
 import re
+import zlib
 from typing import Dict, Any, Optional, Callable
 from qgis.PyQt.QtCore import QObject, pyqtSignal, QTimer, QUrl, QByteArray
 from qgis.PyQt.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
@@ -48,16 +49,16 @@ from qgis.core import QgsSettings
 
 # Internal configuration and utilities
 from ..config.settings import config  # API configuration and settings
-from ..utils.logging import log_error, log_warning  # Centralized logging system
+from ..utils.logging import log_error, log_warning, log_info  # Centralized logging system
 from ..utils.validation import get_user_role_from_token  # JWT token utilities
 
 
 class ApiClient(QObject):
     """HTTP API Client for Needle Digital Mining Data Services.
-    
+
     A comprehensive API client that handles all communication with the Needle Digital
     mining database, including authentication, token management, and data requests.
-    
+
     Features:
         - Firebase Authentication with JWT tokens
         - Automatic token refresh and session management
@@ -66,24 +67,25 @@ class ApiClient(QObject):
         - Robust error handling and retry logic
         - Request/response logging for debugging
         - Network timeout and connection management
-    
+        - Server-Sent Events (SSE) streaming support
+
     Signals:
         login_success(): Emitted when authentication succeeds
         login_failed(str): Emitted when authentication fails with error message
         api_response_received(str, dict): Emitted with endpoint and response data
         api_error_occurred(str, str): Emitted with endpoint and error message
-    
+
     Thread Safety:
         This class is designed to be used from the main Qt thread and uses
         Qt's signal/slot mechanism for asynchronous operations.
     """
-    
+
     # Qt Signals for asynchronous operation feedback
     login_success = pyqtSignal()  # Authentication successful
     login_failed = pyqtSignal(str)  # Authentication failed with error message
     api_response_received = pyqtSignal(str, dict)  # endpoint, response_data
     api_error_occurred = pyqtSignal(str, str)  # endpoint, error_message
-    
+
     def __init__(self):
         super().__init__()
         self.network_manager = QNetworkAccessManager()
@@ -93,6 +95,9 @@ class ApiClient(QObject):
         self.user_role: Optional[str] = None  # User role from token (tier_1, tier_2, admin)
         self._initialization_complete = False
         self._active_replies = []  # Track active network requests for cancellation
+        self._streaming_buffers = {}  # Track SSE parsing buffers by reply
+        self._streaming_decompressors = {}  # Track gzip decompressor objects by reply
+        self._streaming_text_buffers = {}  # Track text buffers for incomplete SSE events
         
         # Token refresh timer
         self.token_refresh_timer = QTimer()
@@ -204,10 +209,10 @@ class ApiClient(QObject):
         if not self.is_authenticated():
             self.api_error_occurred.emit(endpoint, "Authentication required")
             return
-        
+
         url = f"{config.BASE_API_URL}/{endpoint}"
         headers = {"Authorization": f"Bearer {self.auth_token}"}
-        
+
         self._make_request(
             url=url,
             method="GET",
@@ -216,6 +221,238 @@ class ApiClient(QObject):
             callback=lambda data: self._handle_api_response(endpoint, data, callback),
             error_callback=lambda error: self.api_error_occurred.emit(endpoint, error)
         )
+
+    def make_streaming_request(self, endpoint: str, params: Dict[str, Any],
+                               data_callback: Callable[[dict], None],
+                               progress_callback: Callable[[dict], None],
+                               complete_callback: Callable[[dict], None],
+                               error_callback: Callable[[dict], None]) -> QNetworkReply:
+        """
+        Make authenticated streaming API request using Server-Sent Events (SSE).
+
+        Args:
+            endpoint: API endpoint path
+            params: Query parameters dictionary
+            data_callback: Called when 'data' event is received with batch of records
+            progress_callback: Called when 'progress' event is received with progress info
+            complete_callback: Called when 'complete' event is received with final summary
+            error_callback: Called when 'error' event is received or connection fails
+
+        Returns:
+            QNetworkReply: The active network reply (for cancellation support)
+        """
+        if not self.is_authenticated():
+            error_callback({"error": "Authentication required"})
+            return None
+
+        url = f"{config.BASE_API_URL}/{endpoint}"
+
+        # Build URL with query parameters
+        request_url = QUrl(url)
+        if params:
+            query_parts = []
+            for key, value in params.items():
+                if value is not None:
+                    query_parts.append(f"{key}={str(value)}")
+            if query_parts:
+                query_string = "&".join(query_parts)
+                request_url = QUrl(f"{url}?{query_string}")
+
+        request = QNetworkRequest(request_url)
+
+        # Set SSE-specific headers
+        request.setRawHeader(b'Authorization', f"Bearer {self.auth_token}".encode())
+        request.setRawHeader(b'Accept', b'text/event-stream')
+        request.setRawHeader(b'Accept-Encoding', b'gzip, deflate')
+        request.setRawHeader(b'Cache-Control', b'no-cache')
+
+        # Make GET request
+        reply = self.network_manager.get(request)
+
+        # Track reply for cancellation
+        self._active_replies.append(reply)
+
+        # Initialize buffers for this reply
+        reply_id = id(reply)
+        self._streaming_buffers[reply_id] = b""  # Byte buffer for incoming data
+        self._streaming_text_buffers[reply_id] = ""  # Text buffer for incomplete SSE events
+        self._streaming_decompressors[reply_id] = None  # Will create decompressor if gzip detected
+
+        # Store callbacks on reply object for access in handlers
+        reply.data_callback = data_callback
+        reply.progress_callback = progress_callback
+        reply.complete_callback = complete_callback
+        reply.error_callback = error_callback
+
+        # Connect streaming event handlers
+        reply.readyRead.connect(lambda: self._handle_streaming_data(reply))
+        reply.finished.connect(lambda: self._handle_streaming_finished(reply))
+        reply.errorOccurred.connect(lambda error_code: self._handle_streaming_error(reply, error_code))
+
+        return reply
+
+    def _handle_streaming_data(self, reply: QNetworkReply) -> None:
+        """Handle incoming SSE data chunks with incremental gzip decompression support."""
+        try:
+            reply_id = id(reply)
+
+            # Read available bytes
+            chunk_bytes = bytes(reply.readAll())
+            if not chunk_bytes:
+                return
+
+            # Check for gzip encoding on first chunk using rawHeader
+            if self._streaming_decompressors.get(reply_id) is None:
+                # Use rawHeader to get Content-Encoding
+                content_encoding_bytes = reply.rawHeader(b'Content-Encoding')
+                content_encoding = bytes(content_encoding_bytes).decode('utf-8', errors='ignore').lower() if content_encoding_bytes else ''
+
+                if 'gzip' in content_encoding:
+                    # Create incremental decompressor using zlib
+                    import zlib
+                    # wbits=MAX_WBITS | 16 enables gzip format detection
+                    self._streaming_decompressors[reply_id] = zlib.decompressobj(wbits=zlib.MAX_WBITS | 16)
+                    log_info("Streaming response is gzip-compressed, using incremental decompression")
+                else:
+                    # Not gzip, mark as plain text
+                    self._streaming_decompressors[reply_id] = False
+                    log_info("Streaming response is plain text (no gzip)")
+
+            # Decompress if gzip
+            decompressor = self._streaming_decompressors.get(reply_id)
+            if decompressor and decompressor is not False:
+                try:
+                    # Incrementally decompress
+                    decompressed_chunk = decompressor.decompress(chunk_bytes)
+                    if not decompressed_chunk:
+                        # No data yet, might need more chunks
+                        return
+                    text_chunk = decompressed_chunk.decode('utf-8')
+                except Exception as e:
+                    log_error(f"Decompression error: {e}")
+                    import traceback
+                    log_error(traceback.format_exc())
+                    # Don't crash - call error callback and abort
+                    if hasattr(reply, 'error_callback'):
+                        reply.error_callback({"error": f"Decompression failed: {str(e)}"})
+                    reply.abort()
+                    return
+            else:
+                # Plain text - decode directly
+                try:
+                    text_chunk = chunk_bytes.decode('utf-8')
+                except UnicodeDecodeError as e:
+                    log_error(f"UTF-8 decode error: {e}")
+                    import traceback
+                    log_error(traceback.format_exc())
+                    # Don't crash - call error callback and abort
+                    if hasattr(reply, 'error_callback'):
+                        reply.error_callback({"error": f"UTF-8 decode failed: {str(e)}"})
+                    reply.abort()
+                    return
+
+            # Append to text buffer
+            text_buffer = self._streaming_text_buffers.get(reply_id, "")
+            text_buffer += text_chunk
+
+            # Parse SSE events (separated by double newline)
+            events = text_buffer.split('\n\n')
+
+            # Keep the last incomplete event in buffer
+            self._streaming_text_buffers[reply_id] = events[-1]
+
+            # Process complete events
+            for event_block in events[:-1]:
+                if not event_block.strip():
+                    continue
+
+                # Parse event format: event: type\ndata: json
+                lines = event_block.strip().split('\n')
+                event_type = None
+                event_data = None
+
+                for line in lines:
+                    if line.startswith('event:'):
+                        event_type = line[6:].strip()
+                    elif line.startswith('data:'):
+                        try:
+                            event_data = json.loads(line[5:].strip())
+                        except json.JSONDecodeError as e:
+                            log_error(f"Failed to parse SSE data: {e}")
+                            log_error(f"Problematic line: {line[:200]}")
+                            continue
+
+                # Route event to appropriate callback with error handling
+                if event_type and event_data:
+                    try:
+                        if event_type == 'data' and hasattr(reply, 'data_callback'):
+                            reply.data_callback(event_data)
+                        elif event_type == 'progress' and hasattr(reply, 'progress_callback'):
+                            reply.progress_callback(event_data)
+                        elif event_type == 'complete' and hasattr(reply, 'complete_callback'):
+                            reply.complete_callback(event_data)
+                        elif event_type == 'error' and hasattr(reply, 'error_callback'):
+                            reply.error_callback(event_data)
+                    except Exception as callback_error:
+                        log_error(f"Error in {event_type} callback: {callback_error}")
+                        import traceback
+                        log_error(traceback.format_exc())
+
+        except Exception as e:
+            log_error(f"Critical error handling streaming data: {e}")
+            import traceback
+            log_error(traceback.format_exc())
+            # Safely call error callback if it exists
+            try:
+                if hasattr(reply, 'error_callback'):
+                    reply.error_callback({"error": f"Streaming handler error: {str(e)}"})
+            except:
+                pass
+            # Abort to prevent further crashes
+            try:
+                reply.abort()
+            except:
+                pass
+
+    def _handle_streaming_finished(self, reply: QNetworkReply) -> None:
+        """Handle completion of streaming connection."""
+        reply_id = id(reply)
+
+        # Cleanup all tracking structures
+        if reply in self._active_replies:
+            self._active_replies.remove(reply)
+        if reply_id in self._streaming_buffers:
+            del self._streaming_buffers[reply_id]
+        if reply_id in self._streaming_text_buffers:
+            del self._streaming_text_buffers[reply_id]
+        if reply_id in self._streaming_decompressors:
+            del self._streaming_decompressors[reply_id]
+
+        reply.deleteLater()
+
+    def _handle_streaming_error(self, reply: QNetworkReply, error_code) -> None:
+        """Handle streaming connection errors."""
+        if reply.error() != QNetworkReply.NoError:
+            error_msg = reply.errorString()
+            log_error(f"Streaming network error: {error_msg}")
+            reply.error_callback({"error": error_msg})
+
+    def cancel_streaming_request(self, reply: Optional[QNetworkReply]) -> None:
+        """Cancel an active streaming request."""
+        if reply and reply in self._active_replies:
+            reply.abort()
+            self._active_replies.remove(reply)
+
+            # Cleanup buffers and tracking
+            reply_id = id(reply)
+            if reply_id in self._streaming_buffers:
+                del self._streaming_buffers[reply_id]
+            if reply_id in self._streaming_text_buffers:
+                del self._streaming_text_buffers[reply_id]
+            if reply_id in self._streaming_decompressors:
+                del self._streaming_decompressors[reply_id]
+
+            log_warning("Streaming request cancelled by user")
     
     def _make_request(self, url: str, method: str = "GET", data: Optional[Dict] = None, 
                      params: Optional[Dict] = None, headers: Optional[Dict] = None,
