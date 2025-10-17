@@ -95,20 +95,24 @@ class DataManager(QObject):
         # State management
         self.tab_states = {
             'Holes': {
-                'data': [],
+                'data': [],  # Full dataset (for QGIS import)
+                'display_data': [],  # First 1K records only (for fast table pagination)
                 'headers': [],
                 'total_records': 0,
                 'current_page': 0,
                 'records_per_page': 100,
-                'filter_params': {}
+                'filter_params': {},
+                'fetch_details': {}  # Store last fetch details for "View Details" dialog
             },
             'Assays': {
-                'data': [],
+                'data': [],  # Full dataset (for QGIS import)
+                'display_data': [],  # First 1K records only (for fast table pagination)
                 'headers': [],
                 'total_records': 0,
                 'current_page': 0,
                 'records_per_page': 100,
-                'filter_params': {}
+                'filter_params': {},
+                'fetch_details': {}  # Store last fetch details for "View Details" dialog
             }
         }
 
@@ -201,6 +205,12 @@ class DataManager(QObject):
     
     def _start_streaming_fetch(self, tab_name: str, requested_count: int) -> None:
         """Initiate SSE streaming request for data."""
+        # Cancel any existing streaming request first
+        if self.streaming_state and self.streaming_state.get('reply'):
+            old_reply = self.streaming_state['reply']
+            self.api_client.cancel_streaming_request(old_reply)
+            self.streaming_state = None
+
         # Prepare parameters for new streaming API
         base_params = self.tab_states[tab_name]['filter_params'].copy()
 
@@ -217,6 +227,13 @@ class DataManager(QObject):
         # Select appropriate endpoint
         endpoint = API_ENDPOINTS['holes_data'] if tab_name == 'Holes' else API_ENDPOINTS['assays_data']
 
+        # Log request parameters for debugging
+        print(f"\n=== Starting Streaming Request ===")
+        print(f"Endpoint: {endpoint}")
+        print(f"Parameters: {base_params}")
+        log_info(f"Starting streaming fetch for {tab_name}: {requested_count:,} records")
+        log_info(f"Request params: {base_params}")
+
         # Initialize streaming state
         self.streaming_state = {
             'tab_name': tab_name,
@@ -227,7 +244,6 @@ class DataManager(QObject):
         }
 
         # Start streaming
-        log_info(f"Starting streaming fetch for {tab_name}: {requested_count:,} records")
         reply = self.api_client.make_streaming_request(
             endpoint=endpoint,
             params=base_params,
@@ -241,51 +257,35 @@ class DataManager(QObject):
     
     def _handle_streaming_data(self, event_data: dict) -> None:
         """Process incoming data batch from SSE stream."""
-        print(f"\n=== _handle_streaming_data called ===")
-        print(f"Event data keys: {event_data.keys() if isinstance(event_data, dict) else 'NOT A DICT'}")
-        log_info(f"=== _handle_streaming_data called ===")
-        log_info(f"Event data keys: {event_data.keys() if isinstance(event_data, dict) else 'NOT A DICT'}")
-
+        # Silently ignore if no active streaming state (happens when request cancelled or new request started)
         if not self.streaming_state:
-            print("ERROR: streaming_state is None in _handle_streaming_data")
-            log_error("ERROR: streaming_state is None in _handle_streaming_data")
             return
 
         tab_name = self.streaming_state['tab_name']
-        print(f"Processing data for tab: {tab_name}")
-        log_info(f"Processing data for tab: {tab_name}")
 
         # Extract records based on tab
         if tab_name == 'Holes':
             records = event_data.get('holes', [])
-            print(f"Extracted {len(records)} holes from event")
-            log_info(f"Extracted {len(records)} holes from event")
         else:  # Assays
             records = event_data.get('assays', [])  # API sends 'assays', not 'samples'
-            print(f"Extracted {len(records)} assays from event")
-            log_info(f"Extracted {len(records)} assays from event")
 
         # Accumulate all data
         self.streaming_state['all_data'].extend(records)
 
         # Log receipt
         total_accumulated = len(self.streaming_state['all_data'])
-        print(f"Received {len(records)} records via stream (total accumulated: {total_accumulated:,})")
         log_info(f"Received {len(records)} records via stream (total accumulated: {total_accumulated:,})")
 
     def _handle_streaming_progress(self, progress_data: dict) -> None:
         """Update UI with real-time progress from SSE stream."""
-        print(f"\n=== _handle_streaming_progress called ===")
-        print(f"Progress data: {progress_data}")
-        log_info(f"=== _handle_streaming_progress called ===")
-        log_info(f"Progress data: {progress_data}")
+        # Silently ignore if no active streaming state
+        if not self.streaming_state:
+            return
 
-        fetched = progress_data.get('fetched', 0)
+        # API sends 'total_fetched', 'target', and 'progress_percentage'
+        fetched = progress_data.get('total_fetched', 0)
         target = progress_data.get('target', 1)
-        percentage = progress_data.get('percentage', 0)
-
-        print(f"Progress: {fetched}/{target} ({percentage}%)")
-        log_info(f"Progress: {fetched}/{target} ({percentage}%)")
+        percentage = progress_data.get('progress_percentage', 0)
 
         # Emit progress (0-100)
         self.progress_changed.emit(int(percentage))
@@ -295,49 +295,40 @@ class DataManager(QObject):
 
     def _handle_streaming_complete(self, complete_data: dict) -> None:
         """Finalize streaming and prepare data for display."""
-        print(f"\n=== _handle_streaming_complete called ===")
-        print(f"Complete data keys: {complete_data.keys() if isinstance(complete_data, dict) else 'NOT A DICT'}")
-        print(f"Complete data: {complete_data}")
-        log_info(f"=== _handle_streaming_complete called ===")
-        log_info(f"Complete data keys: {complete_data.keys() if isinstance(complete_data, dict) else 'NOT A DICT'}")
-        log_info(f"Complete data: {complete_data}")
-
+        # Silently ignore if no active streaming state
         if not self.streaming_state:
-            print("ERROR: streaming_state is None in _handle_streaming_complete")
-            log_error("ERROR: streaming_state is None in _handle_streaming_complete")
             return
 
         try:
             tab_name = self.streaming_state['tab_name']
             all_data = self.streaming_state['all_data']
 
-            print(f"Tab: {tab_name}, Total accumulated data: {len(all_data)} records")
-            log_info(f"Tab: {tab_name}, Total accumulated data: {len(all_data)} records")
-
             # CRITICAL: Get columns from complete event (not from data records)
             columns = complete_data.get('columns', [])
             total_fetched = complete_data.get('total_fetched', len(all_data))
             state_contributions = complete_data.get('state_contributions', {})
 
-            print(f"Columns from complete event: {columns}")
-            print(f"Total fetched: {total_fetched}")
-            log_info(f"Columns from complete event: {columns}")
-            log_info(f"Total fetched: {total_fetched}")
-
-            # Store data and headers
+            # Store full data (for QGIS import) and display data (first 1K for fast table pagination)
             self.tab_states[tab_name]['data'] = all_data
+            self.tab_states[tab_name]['display_data'] = all_data[:MAX_DISPLAY_RECORDS]  # First 1K only
             self.tab_states[tab_name]['headers'] = columns
             self.tab_states[tab_name]['total_records'] = total_fetched
-
-            print(f"Stored {len(all_data)} records and {len(columns)} columns in tab state")
-            log_info(f"Stored {len(all_data)} records and {len(columns)} columns in tab state")
 
             # Calculate fetch time
             fetch_time = time.time() - self.fetch_start_time
 
+            # Store fetch details for "View Details" dialog
+            # Use the original requested count from streaming_state (before clearing it)
+            requested_count = self.streaming_state.get('total_target', total_fetched)
+            self.tab_states[tab_name]['fetch_details'] = {
+                'total_fetched': total_fetched,
+                'requested_count': requested_count,
+                'fetch_time': fetch_time,
+                'state_contributions': state_contributions,
+                'data_type': tab_name
+            }
+
             # Log completion with state breakdown
-            print(f"Streaming complete: {total_fetched:,} records fetched in {fetch_time:.1f}s")
-            print(f"State contributions: {state_contributions}")
             log_info(f"Streaming complete: {total_fetched:,} records fetched in {fetch_time:.1f}s")
             log_info(f"State contributions: {state_contributions}")
 
@@ -349,51 +340,81 @@ class DataManager(QObject):
             self.progress_changed.emit(100)
             self.status_changed.emit(f"✓ Successfully fetched {total_fetched:,} records in {fetch_time:.1f}s")
 
-            # Send data to UI
+            # Send display_data to UI (not all_data) for fast rendering
             pagination_info = self._get_pagination_info(tab_name)
-            print(f"Pagination info: {pagination_info}")
-            print(f"Emitting data_ready with {len(all_data)} records and {len(columns)} columns")
-            log_info(f"Pagination info: {pagination_info}")
-            log_info(f"Emitting data_ready with {len(all_data)} records and {len(columns)} columns")
-            self.data_ready.emit(tab_name, all_data, columns, pagination_info)
+            display_data = self.tab_states[tab_name]['display_data']
+            self.data_ready.emit(tab_name, display_data, columns, pagination_info)
             self.loading_finished.emit(tab_name)
 
         except Exception as e:
             error_msg = f"Failed to finalize streaming: {e}"
-            log_error(error_msg)
+            print(f"\n=== ERROR IN COMPLETE HANDLER ===")
+            print(f"Error: {e}")
             import traceback
+            traceback.print_exc()
+            log_error(error_msg)
             log_error(traceback.format_exc())
-            self.error_occurred.emit(error_msg)
 
+            # Emergency cleanup
+            tab_name = 'Unknown'
             if self.streaming_state:
-                tab_name = self.streaming_state['tab_name']
+                tab_name = self.streaming_state.get('tab_name', 'Unknown')
                 self.streaming_state = None
-                self._is_fetching = False
-                self.loading_finished.emit(tab_name)
 
-    def _handle_streaming_error(self, error_data: dict) -> None:
-        """Handle streaming errors from SSE stream."""
-        log_error(f"=== _handle_streaming_error called ===")
-        log_error(f"Error data: {error_data}")
-
-        error_msg = error_data.get('error', 'Unknown streaming error')
-
-        # Cleanup
-        if self.streaming_state:
-            tab_name = self.streaming_state['tab_name']
-            self.streaming_state = None
             self._is_fetching = False
+            self.progress_changed.emit(-1)
+            self.error_occurred.emit(error_msg)
             self.loading_finished.emit(tab_name)
 
-        # Emit error
-        self.error_occurred.emit(error_msg)
-        self.progress_changed.emit(-1)  # Hide progress bar
-        log_error(f"Streaming error: {error_msg}")
+    def _handle_streaming_error(self, error_data: dict) -> None:
+        """
+        Handle error events from SSE stream.
+
+        IMPORTANT: Error events are just informational events in the stream,
+        NOT fatal errors. The stream continues and we wait for the 'complete' event.
+        Do NOT close the stream or cleanup state here.
+        """
+        try:
+            print(f"\n=== STREAMING ERROR EVENT (non-fatal) ===")
+            print(f"Error data: {error_data}")
+            log_error(f"SSE error event received (stream continues): {error_data}")
+
+            # Silently ignore if no active streaming state
+            if not self.streaming_state:
+                return
+
+            # Extract error message safely
+            if isinstance(error_data, dict):
+                error_msg = error_data.get('error', 'Unknown error')
+                # Check for API error details
+                if 'message' in error_data:
+                    error_msg = error_data.get('message', error_msg)
+            elif isinstance(error_data, str):
+                error_msg = error_data
+            else:
+                error_msg = str(error_data)
+
+            print(f"Error message: {error_msg}")
+            print(f"Stream continues... waiting for more events")
+
+            # Just log the error - DO NOT close stream or cleanup state
+            # The stream will continue and we'll get more data/progress/complete events
+            log_error(f"Non-fatal stream error: {error_msg}")
+
+        except Exception as e:
+            print(f"CRITICAL ERROR in _handle_streaming_error: {e}")
+            import traceback
+            traceback.print_exc()
+            log_error(f"Critical error in error handler: {e}")
     
     def get_tab_data(self, tab_name: str) -> tuple:
         """Get data and headers for a tab."""
         state = self.tab_states[tab_name]
         return state['data'], state['headers']
+
+    def get_fetch_details(self, tab_name: str) -> dict:
+        """Get fetch details for a tab (for View Details dialog)."""
+        return self.tab_states[tab_name].get('fetch_details', {})
 
     def clear_tab_data(self, tab_name: str) -> None:
         """Clear data for a tab."""
@@ -410,16 +431,19 @@ class DataManager(QObject):
         """Internal method to clear tab data."""
         self.tab_states[tab_name].update({
             'data': [],
+            'display_data': [],
             'headers': [],
             'total_records': 0,
             'current_page': 0,
-            'filter_params': {}
+            'filter_params': {},
+            'fetch_details': {}
         })
 
     def _clear_tab_data_only(self, tab_name: str) -> None:
         """Internal method to clear tab data but preserve filter_params."""
         self.tab_states[tab_name].update({
             'data': [],
+            'display_data': [],
             'headers': [],
             'total_records': 0,
             'current_page': 0
@@ -449,23 +473,21 @@ class DataManager(QObject):
     def _get_pagination_info(self, tab_name: str) -> dict:
         """Calculate pagination information for a tab (table-based pagination, 100 records per page)."""
         state = self.tab_states[tab_name]
-        data_count = len(state['data'])
+        total_records = len(state['data'])  # Full dataset count
+        display_count = len(state['display_data'])  # Display dataset count (max 1K)
 
-        if data_count == 0:
+        if total_records == 0:
             return {
                 'current_page': 0,
                 'total_pages': 0,
                 'records_per_table_page': 100,  # Table displays 100 records per page
-                'total_records': data_count,
+                'total_records': total_records,
                 'showing_records': 0,
                 'has_data': False
             }
 
-        # IMPORTANT: Only show up to MAX_DISPLAY_RECORDS (1000) in table
-        # Calculate pages based on min(data_count, MAX_DISPLAY_RECORDS)
-        display_count = min(data_count, MAX_DISPLAY_RECORDS)
-
         # Table-based pagination: 100 records per page in the table display
+        # Calculate pages based on display_data (not full data)
         records_per_table_page = 100
         total_pages = max(1, (display_count + records_per_table_page - 1) // records_per_table_page)
         current_page = state['current_page'] + 1  # Convert from 0-based to 1-based
@@ -474,7 +496,7 @@ class DataManager(QObject):
             'current_page': current_page,
             'total_pages': total_pages,
             'records_per_table_page': records_per_table_page,
-            'total_records': data_count,  # Actual total (may be > 1000)
+            'total_records': total_records,  # Actual total (may be > 1000)
             'display_count': display_count,  # What's shown in table (max 1000)
             'showing_records': min(records_per_table_page, display_count - (current_page - 1) * records_per_table_page),
             'has_data': True
@@ -483,21 +505,21 @@ class DataManager(QObject):
     def navigate_to_page(self, tab_name: str, page_number: int) -> None:
         """Navigate to a specific page in the table display."""
         state = self.tab_states[tab_name]
-        data_count = len(state['data'])
-        
-        if data_count == 0:
+        display_count = len(state['display_data'])
+
+        if display_count == 0:
             return
-        
+
         records_per_table_page = 100
-        max_page = max(1, (data_count + records_per_table_page - 1) // records_per_table_page)
-        
+        max_page = max(1, (display_count + records_per_table_page - 1) // records_per_table_page)
+
         # Validate page number
         page_number = max(1, min(page_number, max_page))
         state['current_page'] = page_number - 1  # Convert to 0-based
-        
-        # Emit updated data for current page
+
+        # Emit updated data for current page (use display_data, not full data)
         pagination_info = self._get_pagination_info(tab_name)
-        self.data_ready.emit(tab_name, state['data'], state['headers'], pagination_info)
+        self.data_ready.emit(tab_name, state['display_data'], state['headers'], pagination_info)
     
     def next_page(self, tab_name: str) -> None:
         """Navigate to next page."""

@@ -42,7 +42,8 @@ from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer
 
 from .components import (
     DynamicSearchFilterWidget, StaticFilterWidget, SearchableStaticFilterWidget,
-    LoginDialog, LayerOptionsDialog, LargeImportWarningDialog, ImportProgressDialog, MessageBar
+    LoginDialog, LayerOptionsDialog, LargeImportWarningDialog, ImportProgressDialog, MessageBar,
+    FetchDetailsDialog
 )
 from ..config.constants import (
     AUSTRALIAN_STATES, CHEMICAL_ELEMENTS, COMPARISON_OPERATORS, UI_CONFIG, DEFAULT_HOLE_TYPES, ROLE_DISPLAY_NAMES,
@@ -589,23 +590,34 @@ class DataImporterDialog(QDialog):
     def _create_status_bar(self):
         """Create the status bar with cancel button."""
         status_layout = QHBoxLayout()
-        
+
         self.status_label = QLabel(UI_CONFIG['status_messages']['ready'])
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        
+
+        # Create "View Details" button - small and compact
+        self.view_details_button = QPushButton("View Details")
+        self.view_details_button.setDefault(False)
+        self.view_details_button.setAutoDefault(False)
+        self.view_details_button.setVisible(False)  # Hidden by default, shown after successful fetch
+        self.view_details_button.setMaximumWidth(90)
+        self.view_details_button.setMaximumHeight(22)
+
         # Create cancel button
         self.cancel_button = QPushButton("Cancel Request")
         self.cancel_button.setDefault(False)
         self.cancel_button.setAutoDefault(False)
         self.cancel_button.setVisible(False)  # Hidden by default
-        
+
         # Style will be applied by _apply_theme_aware_styling() method
-        
+
         status_layout.addWidget(self.status_label)
-        status_layout.addWidget(self.progress_bar)
+        status_layout.addSpacing(12)  # 12px spacing between status and button
+        status_layout.addWidget(self.view_details_button)
+        status_layout.addStretch()  # Push everything else to the right
+        status_layout.addWidget(self.progress_bar, 1)  # Stretch factor 1 - takes available space
         status_layout.addWidget(self.cancel_button)
-        
+
         self.main_layout.addLayout(status_layout)
     
     def _connect_signals(self):
@@ -613,7 +625,10 @@ class DataImporterDialog(QDialog):
         # Header buttons
         self.login_button.clicked.connect(self._handle_login_button)
         self.reset_all_button.clicked.connect(self._handle_reset_all)
-        
+
+        # View Details button
+        self.view_details_button.clicked.connect(self._handle_view_details)
+
         # Cancel button
         self.cancel_button.clicked.connect(self.cancel_request_requested.emit)
         
@@ -799,11 +814,31 @@ class DataImporterDialog(QDialog):
         # Show layer options dialog with dynamic default name
         default_name = self._generate_dynamic_layer_name(tab_name)
         options_dialog = LayerOptionsDialog(default_name, self)
-        
+
         if options_dialog.exec_() == QDialog.Accepted:
             layer_name, color = options_dialog.get_options()
             self.data_import_requested.emit(tab_name, layer_name, color)
-    
+
+    def _handle_view_details(self):
+        """Handle View Details button click - show fetch details dialog."""
+        if not self.data_manager:
+            return
+
+        # Get current tab
+        current_tab_index = self.tabs.currentIndex()
+        tab_name = "Holes" if current_tab_index == 0 else "Assays"
+
+        # Get fetch details from data manager
+        fetch_details = self.data_manager.get_fetch_details(tab_name)
+
+        if not fetch_details:
+            self.show_info("No fetch details available. Please fetch data first.")
+            return
+
+        # Show the fetch details dialog
+        details_dialog = FetchDetailsDialog(fetch_details, self)
+        details_dialog.exec_()
+
     def _show_role_info(self):
         """Show detailed information about the user's current role/plan."""
         if not self.data_manager or not self.data_manager.is_authenticated():
@@ -1040,16 +1075,13 @@ class DataImporterDialog(QDialog):
         page_label = tab_widgets['page_label']
         
         if data:
-            # Limit table display to first MAX_DISPLAY_RECORDS for performance
-            total_records = len(data)
-            display_data = data[:MAX_DISPLAY_RECORDS]
-
-            # Calculate which data to show for current page (100 records max per page)
+            # Data is already limited to MAX_DISPLAY_RECORDS (1000) from data_manager
+            # No need to slice again - just paginate through it
             records_per_page = 100
             current_page = pagination_info.get('current_page', 1)
             start_idx = (current_page - 1) * records_per_page
-            end_idx = min(start_idx + records_per_page, len(display_data))
-            page_data = display_data[start_idx:end_idx]
+            end_idx = min(start_idx + records_per_page, len(data))
+            page_data = data[start_idx:end_idx]
             
             # Enhanced table display with better UX
             table.setRowCount(len(page_data))
@@ -1096,7 +1128,10 @@ class DataImporterDialog(QDialog):
             content_stack.setCurrentWidget(table)
             import_button.setVisible(True)
             import_button.setEnabled(True)
-            
+
+            # Show "View Details" button when data is successfully loaded
+            self.view_details_button.setVisible(True)
+
             # Update pagination
             prev_button = tab_widgets['prev_button']
             next_button = tab_widgets['next_button']
@@ -1106,10 +1141,12 @@ class DataImporterDialog(QDialog):
                 page_text = f"Page {pagination_info['current_page']} of {pagination_info['total_pages']}"
 
                 # Add display limit info if applicable
-                if total_records > MAX_DISPLAY_RECORDS:
-                    page_text += f" (showing first {MAX_DISPLAY_RECORDS:,} rows)\n    Total rows fetched: {total_records:,}"
+                total_records = pagination_info.get('total_records', 0)
+                display_count = pagination_info.get('display_count', 0)
+                if total_records > display_count:
+                    page_text += f" (showing first {display_count:,} rows)\n    Total rows fetched: {total_records:,}"
                 else:
-                    page_text += f" (showing {pagination_info['total_records']:,} records)"
+                    page_text += f" (showing {total_records:,} records)"
 
                 page_label.setText(page_text)
                 page_label.setAlignment(Qt.AlignCenter)
@@ -1124,6 +1161,9 @@ class DataImporterDialog(QDialog):
         else:
             # Handle empty data case - either reset operation or API call with 0 results
             is_reset_operation = pagination_info.get('is_reset_operation', False)
+
+            # Hide "View Details" button when no data
+            self.view_details_button.setVisible(False)
 
             if is_reset_operation:
                 # Reset operation - show "Waiting for data..." message
@@ -1208,15 +1248,15 @@ class DataImporterDialog(QDialog):
     def show_loading(self, tab_name: str):
         """Show loading state for the specified tab."""
         self._loading_states[tab_name] = True
-        
+
         tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
-        
+
         loading_label = tab_widgets['loading_label']
         content_stack = tab_widgets['content_stack']
         import_button = tab_widgets['import_button']
         pagination_widget = tab_widgets['pagination_widget']
         fetch_button = tab_widgets['fetch_button']
-        
+
         # Clear any previous data from memory and UI efficiently
         table = tab_widgets['table']
         table.setUpdatesEnabled(False)
@@ -1225,22 +1265,25 @@ class DataImporterDialog(QDialog):
             table.setColumnCount(0)
         finally:
             table.setUpdatesEnabled(True)
-        
+
         # Show loading state
         loading_label.setText("Loading data...")
         content_stack.setCurrentWidget(loading_label)
-        
+
         # Show progress bar immediately when loading starts at 1%
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(1)
-        
+
+        # Hide View Details button during loading/streaming
+        self.view_details_button.setVisible(False)
+
         # Hide other components during loading
         import_button.setVisible(False)
         pagination_widget.setVisible(False)
-        
+
         # Disable fetch button to prevent multiple requests
         fetch_button.setEnabled(False)
-        
+
         # Disable all UI controls during loading
         self._disable_all_controls()
     
@@ -1549,6 +1592,16 @@ class DataImporterDialog(QDialog):
                 }
             """)
 
+            # View Details button - small and compact
+            self.view_details_button.setStyleSheet(secondary_style + """
+                QPushButton {
+                    font-size: 10px;
+                    padding: 2px 8px;
+                    min-height: 20px;
+                    max-height: 22px;
+                }
+            """)
+
 
         except Exception as e:
             log_warning(f"Failed to apply theme-aware styling: {e}")
@@ -1576,7 +1629,7 @@ class DataImporterDialog(QDialog):
                           self.holes_tab['fetch_button'], self.assays_tab['fetch_button'],
                           self.holes_tab['import_button'], self.assays_tab['import_button'],
                           self.holes_tab['location_import_button'], self.assays_tab['location_import_button'],
-                          self.cancel_button]:
+                          self.cancel_button, self.view_details_button]:
                 button.setStyleSheet(basic_style)
 
     def _setup_window_geometry(self):

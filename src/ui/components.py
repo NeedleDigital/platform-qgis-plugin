@@ -6,7 +6,7 @@ Contains reusable widgets and layouts for the plugin interface.
 from qgis.PyQt.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QLayout, QComboBox,
     QListView, QDialog, QLineEdit, QFormLayout, QDialogButtonBox, QMessageBox,
-    QColorDialog, QProgressDialog, QScrollArea, QFrame
+    QColorDialog, QProgressDialog, QScrollArea, QFrame, QTableWidget, QTableWidgetItem, QHeaderView
 )
 from qgis.PyQt.QtGui import QFont, QColor, QStandardItemModel, QStandardItem
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize, QEvent, QTimer
@@ -1162,3 +1162,138 @@ class ImportProgressDialog(QProgressDialog):
         
         self.setCancelButtonText("Close")
         self.setValue(self.maximum())  # Set to 100%
+
+
+class FetchDetailsDialog(QDialog):
+    """Dialog to show detailed information about fetched records."""
+
+    def __init__(self, fetch_info: dict, parent=None):
+        """
+        Initialize the fetch details dialog.
+
+        Args:
+            fetch_info: Dictionary containing:
+                - total_fetched: Number of records fetched
+                - requested_count: Number of records requested
+                - fetch_time: Time taken to fetch in seconds
+                - state_contributions: Dict of state -> count
+                - data_type: 'Holes' or 'Assays'
+        """
+        super().__init__(parent)
+        self.fetch_info = fetch_info
+        self._setup_ui()
+
+    def _setup_ui(self):
+        """Setup the dialog UI."""
+        self.setWindowTitle("Fetch Details")
+        self.setMinimumSize(500, 400)
+
+        layout = QVBoxLayout(self)
+
+        # Summary section
+        summary_label = QLabel("Fetch Summary")
+        summary_font = QFont()
+        summary_font.setBold(True)
+        summary_font.setPointSize(12)
+        summary_label.setFont(summary_font)
+        layout.addWidget(summary_label)
+
+        # Add separator
+        separator1 = QFrame()
+        separator1.setFrameShape(QFrame.HLine)
+        separator1.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator1)
+
+        # Summary info
+        total_fetched = self.fetch_info.get('total_fetched', 0)
+        requested_count = self.fetch_info.get('requested_count', 0)
+        fetch_time = self.fetch_info.get('fetch_time', 0)
+        data_type = self.fetch_info.get('data_type', 'Records')
+
+        summary_text = f"<b>Data Type:</b> {data_type}<br>"
+        summary_text += f"<b>Records Fetched:</b> {total_fetched:,}<br>"
+        summary_text += f"<b>Records Requested:</b> {requested_count:,}<br>"
+        summary_text += f"<b>Time Taken:</b> {fetch_time:.1f} seconds"
+
+        summary_info = QLabel(summary_text)
+        summary_info.setTextFormat(Qt.RichText)
+        summary_info.setWordWrap(True)
+        summary_info.setStyleSheet("padding: 10px; background-color: #f0f0f0; border-radius: 5px; color: #333333;")
+        layout.addWidget(summary_info)
+
+        # Show message if fetched < requested
+        if total_fetched < requested_count:
+            availability_msg = QLabel(
+                f"ℹ️ Only {total_fetched:,} records are available in our database for the selected filters. "
+                f"This is the complete dataset matching your criteria."
+            )
+            availability_msg.setWordWrap(True)
+            availability_msg.setStyleSheet(
+                "padding: 10px; background-color: #fff3cd; border: 1px solid #ffc107; "
+                "border-radius: 5px; color: #856404; margin-top: 10px;"
+            )
+            layout.addWidget(availability_msg)
+
+        layout.addSpacing(20)
+
+        # State contributions section
+        state_label = QLabel("State-wise Distribution")
+        state_font = QFont()
+        state_font.setBold(True)
+        state_font.setPointSize(12)
+        state_label.setFont(state_font)
+        layout.addWidget(state_label)
+
+        # Add separator
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.HLine)
+        separator2.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator2)
+
+        # State contributions table
+        state_contributions = self.fetch_info.get('state_contributions', {})
+
+        if state_contributions:
+            table = QTableWidget()
+            table.setColumnCount(3)
+            table.setHorizontalHeaderLabels(["State", "Records", "Percentage"])
+            table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+            table.setEditTriggers(QTableWidget.NoEditTriggers)
+            table.setSelectionBehavior(QTableWidget.SelectRows)
+
+            # Sort states by record count (descending)
+            sorted_states = sorted(
+                state_contributions.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )
+
+            table.setRowCount(len(sorted_states))
+
+            for row, (state, count) in enumerate(sorted_states):
+                # State name
+                state_item = QTableWidgetItem(state if state else "Unknown")
+                table.setItem(row, 0, state_item)
+
+                # Record count
+                count_item = QTableWidgetItem(f"{count:,}")
+                count_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                table.setItem(row, 1, count_item)
+
+                # Percentage
+                percentage = (count / total_fetched * 100) if total_fetched > 0 else 0
+                percentage_item = QTableWidgetItem(f"{percentage:.1f}%")
+                percentage_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                table.setItem(row, 2, percentage_item)
+
+            layout.addWidget(table)
+        else:
+            no_data_label = QLabel("No state-wise distribution data available.")
+            no_data_label.setAlignment(Qt.AlignCenter)
+            no_data_label.setStyleSheet("color: #666; font-style: italic; padding: 20px;")
+            layout.addWidget(no_data_label)
+
+        # Close button
+        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
