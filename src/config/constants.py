@@ -107,6 +107,14 @@ OSM_LAYER_URL = "type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png&zma
 # Used in: src/utils/qgis_helpers.py to skip auto-zoom for large datasets (prevents UI freezing)
 AUTO_ZOOM_THRESHOLD = 50000  # Don't auto-zoom for datasets larger than this
 
+# Drill Hole Trace Visualization Configuration
+# Used in: src/utils/qgis_helpers.py for assay data trace line visualization
+TRACE_SCALE_THRESHOLD = 50000  # Map scale at which trace lines become visible (1:50,000)
+TRACE_DEFAULT_OFFSET_SCALE = 10.0  # Depth/offset ratio when max_depth is unavailable (lower = longer lines)
+TRACE_LINE_WIDTH = 3.0  # Default trace line width in pixels
+COLLAR_POINT_SIZE = 6.0  # Default collar point size in pixels
+TRACE_ELEMENT_STACK_OFFSET = 0.00005  # Horizontal offset between multiple element trace layers
+
 # Australian states and territories
 AUSTRALIAN_STATES: List[Tuple[str, str]] = [
     ("New South Wales", "NSW"),

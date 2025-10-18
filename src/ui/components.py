@@ -6,14 +6,20 @@ Contains reusable widgets and layouts for the plugin interface.
 from qgis.PyQt.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QLayout, QComboBox,
     QListView, QDialog, QLineEdit, QFormLayout, QDialogButtonBox, QMessageBox,
-    QColorDialog, QProgressDialog, QScrollArea, QFrame, QTableWidget, QTableWidgetItem, QHeaderView
+    QColorDialog, QProgressDialog, QScrollArea, QFrame, QTableWidget, QTableWidgetItem, QHeaderView,
+    QSizePolicy, QToolButton
 )
-from qgis.PyQt.QtGui import QFont, QColor, QStandardItemModel, QStandardItem
+from qgis.PyQt.QtGui import QFont, QColor, QStandardItemModel, QStandardItem, QCursor, QIcon
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize, QEvent, QTimer
+from qgis.gui import QgsMapCanvas, QgsMapToolPan, QgsMapToolZoom, QgsMapTool, QgsRubberBand
+from qgis.core import (
+    QgsVectorLayer, QgsProject, QgsCoordinateReferenceSystem, QgsRectangle,
+    QgsGeometry, QgsPointXY, QgsWkbTypes, QgsFeature, QgsFillSymbol, QgsRasterLayer
+)
 
 from ..utils.logging import log_info, log_error, log_warning, log_debug
 from ..config.constants import (
-    MAX_SAFE_IMPORT, PARTIAL_IMPORT_LIMIT
+    MAX_SAFE_IMPORT, OSM_LAYER_NAME, OSM_LAYER_URL, PARTIAL_IMPORT_LIMIT
 )
 
 
@@ -1297,3 +1303,405 @@ class FetchDetailsDialog(QDialog):
         button_box = QDialogButtonBox(QDialogButtonBox.Close)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)
+
+
+class BoundingBoxRectangleTool(QgsMapTool):
+    """Custom map tool for drawing bounding box rectangles by click and drag."""
+
+    rectangle_created = pyqtSignal(QgsRectangle)
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self.canvas = canvas
+        self.rubberBand = None
+        self.startPoint = None
+        self.endPoint = None
+        self.isDrawing = False
+
+        # Create rubber band for visual feedback
+        self.rubberBand = QgsRubberBand(self.canvas, QgsWkbTypes.PolygonGeometry)
+        self.rubberBand.setColor(QColor(255, 0, 0, 100))  # Semi-transparent red
+        self.rubberBand.setWidth(2)
+        self.rubberBand.setLineStyle(Qt.DashLine)
+
+    def canvasPressEvent(self, event):
+        """Handle mouse press - start drawing rectangle."""
+        if event.button() == Qt.LeftButton:
+            self.startPoint = self.toMapCoordinates(event.pos())
+            self.endPoint = self.startPoint
+            self.isDrawing = True
+            self.rubberBand.reset(QgsWkbTypes.PolygonGeometry)
+
+    def canvasMoveEvent(self, event):
+        """Handle mouse move - update rectangle preview."""
+        if not self.isDrawing:
+            return
+
+        self.endPoint = self.toMapCoordinates(event.pos())
+        self._updateRubberBand()
+
+    def canvasReleaseEvent(self, event):
+        """Handle mouse release - finalize rectangle."""
+        if event.button() == Qt.LeftButton and self.isDrawing:
+            self.endPoint = self.toMapCoordinates(event.pos())
+            self.isDrawing = False
+
+            # Create rectangle and emit signal
+            rect = QgsRectangle(self.startPoint, self.endPoint)
+            if not rect.isEmpty():
+                self.rectangle_created.emit(rect)
+
+    def _updateRubberBand(self):
+        """Update rubber band to show current rectangle."""
+        if self.startPoint is None or self.endPoint is None:
+            return
+
+        # Create rectangle points
+        rect = QgsRectangle(self.startPoint, self.endPoint)
+        points = [
+            QgsPointXY(rect.xMinimum(), rect.yMinimum()),
+            QgsPointXY(rect.xMaximum(), rect.yMinimum()),
+            QgsPointXY(rect.xMaximum(), rect.yMaximum()),
+            QgsPointXY(rect.xMinimum(), rect.yMaximum()),
+            QgsPointXY(rect.xMinimum(), rect.yMinimum())  # Close the rectangle
+        ]
+
+        self.rubberBand.reset(QgsWkbTypes.PolygonGeometry)
+        for point in points:
+            self.rubberBand.addPoint(point, True)
+        self.rubberBand.show()
+
+    def reset(self):
+        """Reset the tool."""
+        self.startPoint = None
+        self.endPoint = None
+        self.isDrawing = False
+        if self.rubberBand:
+            self.rubberBand.reset(QgsWkbTypes.PolygonGeometry)
+
+    def deactivate(self):
+        """Clean up when tool is deactivated."""
+        super().deactivate()
+        if self.rubberBand:
+            self.rubberBand.reset(QgsWkbTypes.PolygonGeometry)
+
+
+class PolygonSelectionDialog(QDialog):
+    """Interactive map dialog for selecting a polygon over Australia."""
+
+    def __init__(self, parent=None, existing_polygon=None):
+        """
+        Initialize the polygon selection map dialog.
+
+        Args:
+            parent: Parent widget
+            existing_polygon: Existing polygon dict with key 'coords': [(lat, lon), ...]
+        """
+        super().__init__(parent)
+        self.selected_polygon = existing_polygon
+        self._setup_ui()
+        self._setup_map()
+
+        # If there's an existing bounding box, show it on the map
+        if existing_polygon:
+            self._show_existing_bbox(existing_polygon)
+
+        # Trigger a delayed refresh to ensure basemap renders
+        QTimer.singleShot(100, self._delayed_refresh)
+
+    def _setup_ui(self):
+        """Setup the dialog UI."""
+        self.setWindowTitle("Select Geographic Area - Draw Bounding Box")
+        self.setMinimumSize(900, 700)
+
+        layout = QVBoxLayout(self)
+
+        # Header with instructions
+        header_label = QLabel("🗺️ Draw a Bounding Box on the Map")
+        header_font = QFont()
+        header_font.setBold(True)
+        header_font.setPointSize(14)
+        header_label.setFont(header_font)
+        header_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(header_label)
+
+        # Instructions
+        instructions = QLabel(
+            "• Click and drag to draw a rectangular bounding box\n"
+            "• Use Pan and Zoom tools to navigate the map\n"
+            "• Your selection will filter data within the box boundaries"
+        )
+        instructions.setStyleSheet("padding: 10px; background-color: #e3f2fd; border-radius: 5px; color: #1976d2;")
+        instructions.setWordWrap(True)
+        layout.addWidget(instructions)
+
+        # Map toolbar
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.setSpacing(10)
+
+        # Tool buttons
+        self.pan_button = QPushButton("🖐️ Pan")
+        self.pan_button.setCheckable(True)
+        self.pan_button.setToolTip("Pan the map")
+        self.pan_button.clicked.connect(self._activate_pan_tool)
+
+        self.zoom_in_button = QPushButton("🔍 Zoom In")
+        self.zoom_in_button.setCheckable(True)
+        self.zoom_in_button.setToolTip("Zoom in to the map")
+        self.zoom_in_button.clicked.connect(self._activate_zoom_in_tool)
+
+        self.zoom_out_button = QPushButton("🔍 Zoom Out")
+        self.zoom_out_button.setCheckable(True)
+        self.zoom_out_button.setToolTip("Zoom out from the map")
+        self.zoom_out_button.clicked.connect(self._activate_zoom_out_tool)
+
+        self.draw_button = QPushButton("📐 Draw Box")
+        self.draw_button.setCheckable(True)
+        self.draw_button.setChecked(True)  # Default tool
+        self.draw_button.setToolTip("Draw a bounding box")
+        self.draw_button.clicked.connect(self._activate_draw_tool)
+
+        self.reset_view_button = QPushButton("🌏 Reset View")
+        self.reset_view_button.setToolTip("Reset to Australia view")
+        self.reset_view_button.clicked.connect(self._reset_map_view)
+
+        self.clear_box_button = QPushButton("🗑️ Clear Box")
+        self.clear_box_button.setToolTip("Clear the current bounding box")
+        self.clear_box_button.clicked.connect(self._clear_bbox)
+
+        toolbar_layout.addWidget(self.pan_button)
+        toolbar_layout.addWidget(self.zoom_in_button)
+        toolbar_layout.addWidget(self.zoom_out_button)
+        toolbar_layout.addWidget(self.draw_button)
+        toolbar_layout.addWidget(self.reset_view_button)
+        toolbar_layout.addWidget(self.clear_box_button)
+        toolbar_layout.addStretch()
+
+        layout.addLayout(toolbar_layout)
+
+        # Map canvas
+        self.map_canvas = QgsMapCanvas()
+        self.map_canvas.setMinimumSize(800, 500)
+        layout.addWidget(self.map_canvas)
+
+        # Coordinates display
+        self.coords_label = QLabel("No bounding box selected - Click and drag to draw")
+        self.coords_label.setStyleSheet(
+            "padding: 10px; background-color: #f5f5f5; border: 1px solid #ddd; "
+            "border-radius: 5px; font-family: monospace; color: #333;"
+        )
+        self.coords_label.setWordWrap(True)
+        layout.addWidget(self.coords_label)
+
+        # Dialog buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self._on_accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def _setup_map(self):
+        """Setup the map canvas with Australia-centered view and basemap."""
+        from qgis.core import (
+            QgsCoordinateReferenceSystem,
+            QgsCoordinateTransform,
+            QgsProject,
+            QgsRasterLayer,
+            QgsRectangle
+        )
+
+        # Use Web Mercator (EPSG:3857)
+        crs = QgsCoordinateReferenceSystem("EPSG:3857")
+        self.map_canvas.setDestinationCrs(crs)
+        self.map_canvas.setCanvasColor(QColor(255, 255, 255))
+        self.map_canvas.enableAntiAliasing(True)
+
+        # ✅ FIX 1: Use provider "xyz" (not "wms")
+        # basemap_url = "type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+        basemap_layer = QgsRasterLayer(OSM_LAYER_URL, OSM_LAYER_NAME, "wms")
+
+        if basemap_layer.isValid():
+            # ✅ FIX 2: Add to project before setting canvas layers
+            QgsProject.instance().addMapLayer(basemap_layer, addToLegend=False)
+            self.map_canvas.setLayers([basemap_layer])
+            log_info("OpenStreetMap basemap loaded successfully")
+        else:
+            log_warning("Failed to load OpenStreetMap basemap - using blank canvas")
+            
+        print("Layer CRS:", basemap_layer.crs().authid())
+        print("Canvas CRS:", self.map_canvas.mapSettings().destinationCrs().authid())
+        print("Layer Extent:", basemap_layer.extent().toString())
+        print("Canvas Extent:", self.map_canvas.extent().toString())
+
+        # ✅ FIX 3: Reset extent to valid area (Australia)
+        transform = QgsCoordinateTransform(
+            QgsCoordinateReferenceSystem("EPSG:4326"),
+            crs,
+            QgsProject.instance()
+        )
+
+        australia_extent_4326 = QgsRectangle(113, -44, 154, -10)
+        australia_extent = transform.transformBoundingBox(australia_extent_4326)
+        self.map_canvas.setExtent(australia_extent)
+
+        # ✅ FIX 4: Unfreeze and refresh *after* extent and layers set
+        self.map_canvas.freeze(False)
+        self.map_canvas.setRenderFlag(True)
+        self.map_canvas.refresh()
+        self.map_canvas.refreshAllLayers()
+
+        # ✅ Tools and rubber bands
+        self.pan_tool = QgsMapToolPan(self.map_canvas)
+        self.zoom_in_tool = QgsMapToolZoom(self.map_canvas, False)
+        self.zoom_out_tool = QgsMapToolZoom(self.map_canvas, True)
+        self.draw_tool = BoundingBoxRectangleTool(self.map_canvas)
+        self.draw_tool.rectangle_created.connect(self._on_rectangle_created)
+
+        self.bbox_rubber_band = QgsRubberBand(self.map_canvas, QgsWkbTypes.PolygonGeometry)
+        self.bbox_rubber_band.setColor(QColor(0, 120, 255, 80))
+        self.bbox_rubber_band.setWidth(3)
+
+        # ✅ Activate draw tool and refresh again after short delay
+        self._activate_draw_tool()
+        QTimer.singleShot(200, self.map_canvas.refreshAllLayers)
+
+
+    def _show_existing_bbox(self, bbox):
+        """Show existing bounding box on map."""
+        coords = bbox.get('coords', [])
+        if coords and len(coords) == 4:
+            # Coords are 4 corners: [bottom-left, bottom-right, top-right, top-left]
+            # Extract min/max lat/lon
+            lats = [lat for lat, lon in coords]
+            lons = [lon for lat, lon in coords]
+            rect_4326 = QgsRectangle(min(lons), min(lats), max(lons), max(lats))
+
+            # Convert to map CRS (Web Mercator)
+            from qgis.core import QgsCoordinateTransform, QgsProject
+            transform = QgsCoordinateTransform(
+                QgsCoordinateReferenceSystem("EPSG:4326"),
+                self.map_canvas.mapSettings().destinationCrs(),
+                QgsProject.instance()
+            )
+            rect = transform.transformBoundingBox(rect_4326)
+            self._update_bbox_display(rect)
+
+    def _activate_pan_tool(self):
+        """Activate pan tool."""
+        self._uncheck_all_tool_buttons()
+        self.pan_button.setChecked(True)
+        self.map_canvas.setMapTool(self.pan_tool)
+
+    def _activate_zoom_in_tool(self):
+        """Activate zoom in tool."""
+        self._uncheck_all_tool_buttons()
+        self.zoom_in_button.setChecked(True)
+        self.map_canvas.setMapTool(self.zoom_in_tool)
+
+    def _activate_zoom_out_tool(self):
+        """Activate zoom out tool."""
+        self._uncheck_all_tool_buttons()
+        self.zoom_out_button.setChecked(True)
+        self.map_canvas.setMapTool(self.zoom_out_tool)
+
+    def _activate_draw_tool(self):
+        """Activate draw tool."""
+        self._uncheck_all_tool_buttons()
+        self.draw_button.setChecked(True)
+        self.map_canvas.setMapTool(self.draw_tool)
+
+    def _uncheck_all_tool_buttons(self):
+        """Uncheck all tool buttons."""
+        self.pan_button.setChecked(False)
+        self.zoom_in_button.setChecked(False)
+        self.zoom_out_button.setChecked(False)
+        self.draw_button.setChecked(False)
+
+    def _reset_map_view(self):
+        """Reset map view to Australia."""
+        # Convert WGS84 bounds to Web Mercator
+        from qgis.core import QgsCoordinateTransform, QgsProject
+        transform = QgsCoordinateTransform(
+            QgsCoordinateReferenceSystem("EPSG:4326"),
+            self.map_canvas.mapSettings().destinationCrs(),
+            QgsProject.instance()
+        )
+        australia_extent_4326 = QgsRectangle(113, -44, 154, -10)
+        australia_extent = transform.transformBoundingBox(australia_extent_4326)
+        self.map_canvas.setExtent(australia_extent)
+        self.map_canvas.refresh()
+
+    def _clear_bbox(self):
+        """Clear the current bounding box."""
+        self.selected_polygon = None
+        self.bbox_rubber_band.reset(QgsWkbTypes.PolygonGeometry)
+        self.coords_label.setText("No bounding box selected - Click and drag to draw")
+        self.draw_tool.reset()
+
+    def _on_rectangle_created(self, rect):
+        """Handle rectangle creation from draw tool."""
+        self._update_bbox_display(rect)
+
+    def _update_bbox_display(self, rect):
+        """Update the bounding box display on map and in UI."""
+        # Convert rectangle from map CRS to WGS84 for storage
+        from qgis.core import QgsCoordinateTransform, QgsProject
+        transform = QgsCoordinateTransform(
+            self.map_canvas.mapSettings().destinationCrs(),
+            QgsCoordinateReferenceSystem("EPSG:4326"),
+            QgsProject.instance()
+        )
+        rect_4326 = transform.transformBoundingBox(rect)
+
+        # Store as 4 corner coordinates (bottom-left, bottom-right, top-right, top-left) in lat,lon format
+        coords = [
+            (rect_4326.yMinimum(), rect_4326.xMinimum()),  # Bottom-left
+            (rect_4326.yMinimum(), rect_4326.xMaximum()),  # Bottom-right
+            (rect_4326.yMaximum(), rect_4326.xMaximum()),  # Top-right
+            (rect_4326.yMaximum(), rect_4326.xMinimum())   # Top-left
+        ]
+
+        self.selected_polygon = {
+            'coords': coords
+        }
+
+        # Update rubber band display (in map CRS)
+        points = [
+            QgsPointXY(rect.xMinimum(), rect.yMinimum()),
+            QgsPointXY(rect.xMaximum(), rect.yMinimum()),
+            QgsPointXY(rect.xMaximum(), rect.yMaximum()),
+            QgsPointXY(rect.xMinimum(), rect.yMaximum()),
+            QgsPointXY(rect.xMinimum(), rect.yMinimum())
+        ]
+
+        self.bbox_rubber_band.reset(QgsWkbTypes.PolygonGeometry)
+        for point in points:
+            self.bbox_rubber_band.addPoint(point, True)
+        self.bbox_rubber_band.show()
+
+        # Update coordinates label
+        self.coords_label.setText(
+            f"✓ Bounding Box Selected:\n"
+            f"Latitude: {rect_4326.yMinimum():.4f}° to {rect_4326.yMaximum():.4f}° | "
+            f"Longitude: {rect_4326.xMinimum():.4f}° to {rect_4326.xMaximum():.4f}°"
+        )
+
+    def _on_accept(self):
+        """Handle OK button click."""
+        if self.selected_polygon is None:
+            QMessageBox.warning(
+                self,
+                "No Bounding Box Selected",
+                "Please draw a bounding box on the map before clicking OK.\nClick and drag to draw a rectangle."
+            )
+            return
+
+        self.accept()
+
+    def get_polygon(self):
+        """Get the selected bounding box coordinates as 4 corners."""
+        return self.selected_polygon
+
+    def _delayed_refresh(self):
+        """Delayed refresh to ensure basemap tiles load properly."""
+        self.map_canvas.refresh()
+        self.map_canvas.refreshAllLayers()

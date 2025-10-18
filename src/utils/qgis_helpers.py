@@ -35,7 +35,8 @@ from typing import List, Dict, Any, Optional, Tuple
 from qgis.core import (
     QgsVectorLayer, QgsRasterLayer, QgsFeature, QgsGeometry, QgsPoint, QgsField,
     QgsProject, QgsSymbol, QgsSingleSymbolRenderer, QgsMessageLog,
-    Qgis, QgsCoordinateReferenceSystem, QgsCoordinateTransform
+    Qgis, QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsPointXY,
+    QgsGraduatedSymbolRenderer, QgsRendererRange, QgsLineSymbol, QgsLayerTreeGroup
 )
 from qgis.PyQt.QtCore import QVariant, QMetaType
 from qgis.PyQt.QtGui import QColor
@@ -43,7 +44,9 @@ from qgis.PyQt.QtGui import QColor
 # Configuration imports for styling and thresholds
 from ..config.constants import (
     DEFAULT_LAYER_STYLE, IMPORT_CHUNK_SIZE, OSM_LAYER_NAME,
-    OSM_LAYER_URL, AUTO_ZOOM_THRESHOLD
+    OSM_LAYER_URL, AUTO_ZOOM_THRESHOLD, TRACE_SCALE_THRESHOLD,
+    TRACE_DEFAULT_OFFSET_SCALE, TRACE_LINE_WIDTH, COLLAR_POINT_SIZE,
+    TRACE_ELEMENT_STACK_OFFSET
 )
 from .logging import log_error, log_warning
 # Import version compatibility utilities for QGIS 3.0+ support
@@ -598,8 +601,301 @@ class QGISLayerManager:
             
             success_msg = f"Successfully imported {total_features_added:,} records in {(total_records + chunk_size - 1) // chunk_size} chunks"
             return True, success_msg
-            
+
         except Exception as e:
             error_msg = f"Failed to create layer with chunked import: {str(e)}"
             log_error(error_msg)
             return False, error_msg
+
+    def create_assay_trace_layer(
+        self,
+        layer_name: str,
+        data: List[Dict[str, Any]],
+        color: Optional[QColor] = None,
+        element: str = "Unknown",
+        value_field: str = "assay_value"
+    ) -> Tuple[bool, str]:
+        """
+        Create drill hole trace visualization layers for assay data.
+
+        Creates two layers:
+        1. Collar points layer (visible when zoomed out)
+        2. Interval trace lines layer (visible when zoomed in)
+
+        Args:
+            layer_name: Base name for the layers
+            data: List of assay records with lat, lon, from_depth, to_depth, assay_value
+            color: Optional color for styling
+            element: Element name for the assay data
+            value_field: Field name containing assay values (default: 'assay_value')
+
+        Returns:
+            Tuple of (success, message)
+        """
+        try:
+            from .trace_visualization import (
+                group_by_collar, get_max_depth_from_data,
+                create_trace_line_geometry, calculate_value_quantiles,
+                apply_graduated_trace_symbology
+            )
+
+            if not data:
+                return False, "No data to import"
+
+            # DEBUG: Print first record to see structure
+            print(f"\n=== TRACE LAYER DEBUG ===")
+            print(f"Total records: {len(data)}")
+            print(f"First record keys: {list(data[0].keys())}")
+            print(f"First record: {data[0]}")
+            print(f"Value field: {value_field}")
+
+            # Group samples by drill hole (unique lat/lon)
+            holes = group_by_collar(data)
+            print(f"Grouped into {len(holes)} collar locations")
+
+            # Get maximum depth for proportional scaling (use final_depth field)
+            max_depth = get_max_depth_from_data(data)
+            print(f"Max depth: {max_depth}")
+            print("=" * 50)
+
+            # Create collar points layer
+            collar_success, collar_layer = self._create_collar_points_layer(
+                f"{layer_name} - Collars",
+                holes,
+                color or QColor(0, 120, 255),
+                value_field
+            )
+
+            if not collar_success:
+                return False, f"Failed to create collar layer: {collar_layer}"
+
+            # Create trace lines layer
+            trace_success, trace_layer = self._create_trace_lines_layer(
+                f"{layer_name} - Traces",
+                data,
+                element,
+                max_depth
+            )
+
+            if not trace_success:
+                return False, f"Failed to create trace layer: {trace_layer}"
+
+            # Apply scale-dependent visibility
+            # Collar points: always visible
+            collar_layer.setScaleBasedVisibility(False)
+
+            # Trace lines: visible when zoomed in (smaller scale number = zoomed in)
+            trace_layer.setScaleBasedVisibility(True)
+            trace_layer.setMaximumScale(1)  # Show when zoomed in (small scale number)
+            trace_layer.setMinimumScale(TRACE_SCALE_THRESHOLD)  # Hide when zoomed out (large scale number)
+
+            # Apply graduated symbology to traces
+            if value_field:
+                quantiles = calculate_value_quantiles(data, value_field)
+                apply_graduated_trace_symbology(trace_layer, value_field, quantiles, TRACE_LINE_WIDTH)
+
+            # Create layer group and add layers
+            root = QgsProject.instance().layerTreeRoot()
+            group = root.insertGroup(0, f"{element} Assays")
+            group.addLayer(collar_layer)
+            group.addLayer(trace_layer)
+
+            # Zoom to collar layer if dataset not too large
+            if self.iface and len(holes) <= AUTO_ZOOM_THRESHOLD:
+                self._zoom_to_layer(collar_layer)
+
+            return True, f"Successfully created trace visualization: {len(holes)} collars, {len(data)} intervals"
+
+        except Exception as e:
+            error_msg = f"Failed to create trace layer: {str(e)}"
+            log_error(error_msg)
+            return False, error_msg
+
+    def _find_value_field(self, data: List[Dict[str, Any]], element: str) -> Optional[str]:
+        """Find the field name containing element values.
+
+        Args:
+            data: List of data records
+            element: Element name (e.g., 'Au', 'Cu')
+
+        Returns:
+            Field name or None if not found
+        """
+        if not data:
+            return None
+
+        first_record = data[0]
+
+        # Try lowercase element name
+        element_lower = element.lower()
+        if element_lower in first_record:
+            return element_lower
+
+        # Try uppercase element name
+        element_upper = element.upper()
+        if element_upper in first_record:
+            return element_upper
+
+        # Try 'value' field
+        if 'value' in first_record:
+            return 'value'
+
+        # Try to find any numeric field that's not depth/coordinate
+        exclude_fields = ['from_depth', 'to_depth', 'lat', 'lon', 'latitude', 'longitude',
+                         'hole_id', 'sample_id', 'max_depth']
+        for key in first_record.keys():
+            if key.lower() not in exclude_fields:
+                val = first_record[key]
+                try:
+                    float(val)
+                    return key
+                except (ValueError, TypeError):
+                    continue
+
+        return None
+
+    def _create_collar_points_layer(
+        self,
+        layer_name: str,
+        holes: Dict[Tuple[float, float], List[Dict]],
+        color: QColor,
+        value_field: Optional[str] = None
+    ) -> Tuple[bool, Optional[QgsVectorLayer]]:
+        """Create point layer for drill hole collars."""
+        try:
+            crs = QgsCoordinateReferenceSystem("EPSG:4326")
+            layer = QgsVectorLayer(f"Point?crs={crs.authid()}", layer_name, "memory")
+
+            if not layer.isValid():
+                return False, None
+
+            provider = layer.dataProvider()
+
+            # Define fields
+            fields = [
+                create_qgs_field_compatible('hole_id', QVariant.String),
+                create_qgs_field_compatible('lat', QVariant.Double),
+                create_qgs_field_compatible('lon', QVariant.Double),
+                create_qgs_field_compatible('sample_count', QVariant.Int),
+                create_qgs_field_compatible('max_value', QVariant.Double)
+            ]
+            provider.addAttributes(fields)
+            layer.updateFields()
+
+            # Start editing
+            layer.startEditing()
+
+            # Create features
+            hole_id = 1
+            for (lat, lon), samples in holes.items():
+                feature = QgsFeature(layer.fields())
+                feature.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(lon, lat)))
+
+                # Calculate stats for this hole using the detected value field
+                values = []
+                if value_field:
+                    values = [s.get(value_field, 0) for s in samples if s.get(value_field) is not None]
+                max_val = max(values) if values else 0
+
+                feature.setAttribute('hole_id', f"DH{hole_id:04d}")
+                feature.setAttribute('lat', lat)
+                feature.setAttribute('lon', lon)
+                feature.setAttribute('sample_count', len(samples))
+                feature.setAttribute('max_value', max_val)
+
+                layer.addFeature(feature)
+                hole_id += 1
+
+            # Commit changes
+            layer.commitChanges()
+            layer.updateExtents()
+
+            print(f"Collar layer feature count: {layer.featureCount()}")
+
+            # Apply styling
+            self._apply_layer_styling(layer, color)
+
+            # Add to project
+            QgsProject.instance().addMapLayer(layer, False)  # Don't add to legend yet
+
+            return True, layer
+
+        except Exception as e:
+            log_error(f"Failed to create collar layer: {str(e)}")
+            return False, None
+
+    def _create_trace_lines_layer(
+        self,
+        layer_name: str,
+        data: List[Dict[str, Any]],
+        element: str,
+        max_depth: Optional[float]
+    ) -> Tuple[bool, Optional[QgsVectorLayer]]:
+        """Create line layer for drill hole trace intervals."""
+        try:
+            from .trace_visualization import create_trace_line_geometry
+
+            crs = QgsCoordinateReferenceSystem("EPSG:4326")
+            layer = QgsVectorLayer(f"LineString?crs={crs.authid()}", layer_name, "memory")
+
+            if not layer.isValid():
+                return False, None
+
+            provider = layer.dataProvider()
+
+            # Define fields based on first record
+            if data:
+                fields = self._create_fields_from_data(data[0])
+                # Add depth-specific fields
+                fields.extend([
+                    create_qgs_field_compatible('interval_length', QVariant.Double),
+                    create_qgs_field_compatible('midpoint_depth', QVariant.Double)
+                ])
+                provider.addAttributes(fields)
+                layer.updateFields()
+
+            # Start editing
+            layer.startEditing()
+
+            # Create line features
+            for record in data:
+                feature = QgsFeature(layer.fields())
+
+                # Create trace line geometry
+                line_geom = create_trace_line_geometry(
+                    record,
+                    max_depth,
+                    TRACE_DEFAULT_OFFSET_SCALE
+                )
+                feature.setGeometry(line_geom)
+
+                # Set attributes
+                for field in layer.fields():
+                    field_name = field.name()
+                    if field_name == 'interval_length':
+                        from_d = float(record.get('from_depth', 0))
+                        to_d = float(record.get('to_depth', from_d))
+                        feature.setAttribute(field_name, to_d - from_d)
+                    elif field_name == 'midpoint_depth':
+                        from_d = float(record.get('from_depth', 0))
+                        to_d = float(record.get('to_depth', from_d))
+                        feature.setAttribute(field_name, (from_d + to_d) / 2)
+                    else:
+                        feature.setAttribute(field_name, record.get(field_name))
+
+                layer.addFeature(feature)
+
+            # Commit changes
+            layer.commitChanges()
+            layer.updateExtents()
+
+            print(f"Trace layer feature count: {layer.featureCount()}")
+
+            # Add to project
+            QgsProject.instance().addMapLayer(layer, False)  # Don't add to legend yet
+
+            return True, layer
+
+        except Exception as e:
+            log_error(f"Failed to create trace lines layer: {str(e)}")
+            return False, None

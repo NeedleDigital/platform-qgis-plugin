@@ -253,10 +253,21 @@ class ApiClient(QObject):
             query_parts = []
             for key, value in params.items():
                 if value is not None:
-                    query_parts.append(f"{key}={str(value)}")
+                    # Special handling for polygon_coords - add multiple coords parameters
+                    if key == 'polygon_coords' and isinstance(value, list):
+                        for lat, lon in value:
+                            query_parts.append(f"coords={lat},{lon}")
+                    else:
+                        query_parts.append(f"{key}={str(value)}")
             if query_parts:
                 query_string = "&".join(query_parts)
                 request_url = QUrl(f"{url}?{query_string}")
+
+        # Log the complete API request URL to console
+        print(f"\n=== API REQUEST ===")
+        print(f"URL: {request_url.toString()}")
+        print(f"Method: GET")
+        print("==================\n")
 
         request = QNetworkRequest(request_url)
 

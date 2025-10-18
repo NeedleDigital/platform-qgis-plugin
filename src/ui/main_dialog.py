@@ -43,7 +43,7 @@ from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer
 from .components import (
     DynamicSearchFilterWidget, StaticFilterWidget, SearchableStaticFilterWidget,
     LoginDialog, LayerOptionsDialog, LargeImportWarningDialog, ImportProgressDialog, MessageBar,
-    FetchDetailsDialog
+    FetchDetailsDialog, PolygonSelectionDialog
 )
 from ..config.constants import (
     AUSTRALIAN_STATES, CHEMICAL_ELEMENTS, COMPARISON_OPERATORS, UI_CONFIG, DEFAULT_HOLE_TYPES, ROLE_DISPLAY_NAMES,
@@ -287,20 +287,56 @@ class DataImporterDialog(QDialog):
             controls_layout.addRow("Hole Type & Depth:", hole_depth_layout)
             widgets['max_depth_input'] = max_depth_input
 
-            # Record count controls
+            # Record count controls with bounding box
             count_input = QLineEdit("100")
             # Add validator for positive integers only
             count_input.setValidator(QIntValidator(1, 999999999, count_input))
             # Connect to role-based validation
             count_input.textChanged.connect(lambda: self._validate_record_count(count_input, "Holes"))
 
+            # Bounding box button
+            bbox_button = QPushButton("📍 Select Area ")
+            bbox_button.setToolTip("Draw a bounding box on the map to filter by geographic area")
+            bbox_button.setMaximumWidth(110)
+            bbox_button.setStyleSheet(
+                "color: white;"
+            )
+            bbox_button.clicked.connect(lambda: self._handle_bbox_selection("Holes"))
+
+            # Bounding box indicator/clear button
+            bbox_indicator = QLabel("")
+            bbox_indicator.setVisible(False)
+            bbox_indicator.setStyleSheet(
+                "padding: 4px 8px; background-color: #359d33; color: white; "
+                "border-radius: 3px; font-size: 10px; font-weight: bold;"
+            )
+
+            bbox_clear_button = QPushButton("✕")
+            bbox_clear_button.setToolTip("Clear bounding box selection")
+            bbox_clear_button.setMaximumWidth(25)
+            bbox_clear_button.setMaximumHeight(25)
+            bbox_clear_button.setStyleSheet(
+                "color: white;"
+            )
+            bbox_clear_button.setVisible(False)
+            bbox_clear_button.clicked.connect(lambda: self._clear_bbox_selection("Holes"))
+
             records_layout = QHBoxLayout()
             records_layout.addWidget(count_input)
+            records_layout.addSpacing(10)
+            records_layout.addWidget(bbox_button)
+            records_layout.addSpacing(10)
+            records_layout.addWidget(bbox_indicator)
+            records_layout.addWidget(bbox_clear_button)
             records_layout.addStretch()
             controls_layout.addRow("No. of Records:", records_layout)
 
             widgets.update({
-                'count_input': count_input
+                'count_input': count_input,
+                'bbox_button': bbox_button,
+                'bbox_indicator': bbox_indicator,
+                'bbox_clear_button': bbox_clear_button,
+                'selected_bbox': None  # Store selected bounding box
             })
 
             # Fetch button
@@ -449,20 +485,56 @@ class DataImporterDialog(QDialog):
             controls_layout.addRow("Company Name(s):", company_filter_container)
             widgets['company_filter'] = company_filter
 
-            # Record count controls
+            # Record count controls with bounding box
             count_input = QLineEdit("100")
             # Add validator for positive integers only
             count_input.setValidator(QIntValidator(1, 999999999, count_input))
             # Connect to role-based validation
             count_input.textChanged.connect(lambda: self._validate_record_count(count_input, "Assays"))
 
+            # Bounding box button
+            bbox_button = QPushButton("📍 Select Area ")
+            bbox_button.setToolTip("Draw a bounding box on the map to filter by geographic area")
+            bbox_button.setMaximumWidth(110)
+            bbox_button.setStyleSheet(
+                "color: white;"
+            )
+            bbox_button.clicked.connect(lambda: self._handle_bbox_selection("Assays"))
+
+            # Bounding box indicator/clear button
+            bbox_indicator = QLabel("")
+            bbox_indicator.setVisible(False)
+            bbox_indicator.setStyleSheet(
+                "padding: 4px 8px; background-color: #359d33; color: white; "
+                "border-radius: 3px; font-size: 10px; font-weight: bold;"
+            )
+
+            bbox_clear_button = QPushButton("✕")
+            bbox_clear_button.setToolTip("Clear bounding box selection")
+            bbox_clear_button.setMaximumWidth(25)
+            bbox_clear_button.setMaximumHeight(25)
+            bbox_clear_button.setStyleSheet(
+                "color: white;"
+            )
+            bbox_clear_button.setVisible(False)
+            bbox_clear_button.clicked.connect(lambda: self._clear_bbox_selection("Assays"))
+
             records_layout = QHBoxLayout()
             records_layout.addWidget(count_input)
+            records_layout.addSpacing(10)
+            records_layout.addWidget(bbox_button)
+            records_layout.addSpacing(10)
+            records_layout.addWidget(bbox_indicator)
+            records_layout.addWidget(bbox_clear_button)
             records_layout.addStretch()
             controls_layout.addRow("No. of Records:", records_layout)
 
             widgets.update({
-                'count_input': count_input
+                'count_input': count_input,
+                'bbox_button': bbox_button,
+                'bbox_indicator': bbox_indicator,
+                'bbox_clear_button': bbox_clear_button,
+                'selected_bbox': None  # Store selected bounding box
             })
 
             # Fetch button
@@ -748,6 +820,12 @@ class DataImporterDialog(QDialog):
             requested_count = 100
             params['requested_count'] = requested_count
 
+        # Add polygon coordinates if selected
+        selected_polygon = tab_widgets.get('selected_bbox')  # Still stored as 'selected_bbox' key
+        if selected_polygon and 'coords' in selected_polygon:
+            # Store polygon coords as list for special handling in API client
+            params['polygon_coords'] = selected_polygon['coords']
+
         # Emit request signal (fetch_all is always False now)
         self.data_fetch_requested.emit(tab_name, params, False)
     
@@ -838,6 +916,41 @@ class DataImporterDialog(QDialog):
         # Show the fetch details dialog
         details_dialog = FetchDetailsDialog(fetch_details, self)
         details_dialog.exec_()
+
+    def _handle_bbox_selection(self, tab_name: str):
+        """Handle polygon selection button click - show map dialog."""
+        tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
+
+        # Get existing polygon if any
+        existing_polygon = tab_widgets.get('selected_bbox')  # Still stored as 'selected_bbox' key for now
+
+        # Show map dialog
+        polygon_dialog = PolygonSelectionDialog(self, existing_polygon)
+
+        if polygon_dialog.exec_() == QDialog.Accepted:
+            # Get selected polygon
+            selected_polygon = polygon_dialog.get_polygon()
+
+            if selected_polygon:
+                # Store in tab widgets
+                tab_widgets['selected_bbox'] = selected_polygon
+
+                # Update indicator to show polygon is active
+                num_vertices = len(selected_polygon['coords'])
+                tab_widgets['bbox_indicator'].setText(f"📍 Polygon ({num_vertices} vertices)")
+                tab_widgets['bbox_indicator'].setVisible(True)
+                tab_widgets['bbox_clear_button'].setVisible(True)
+
+    def _clear_bbox_selection(self, tab_name: str):
+        """Clear bounding box selection for a tab."""
+        tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
+
+        # Clear stored bounding box
+        tab_widgets['selected_bbox'] = None
+
+        # Hide indicator and clear button
+        tab_widgets['bbox_indicator'].setVisible(False)
+        tab_widgets['bbox_clear_button'].setVisible(False)
 
     def _show_role_info(self):
         """Show detailed information about the user's current role/plan."""
@@ -1411,7 +1524,10 @@ class DataImporterDialog(QDialog):
 
         # Reset record count
         holes_tab['count_input'].setText("100")
-        
+
+        # Clear bounding box selection for Holes
+        self._clear_bbox_selection("Holes")
+
         # Reset Assays tab filters  
         assays_tab = self.assays_tab
         
@@ -1445,7 +1561,10 @@ class DataImporterDialog(QDialog):
 
         # Reset record count
         assays_tab['count_input'].setText("100")
-    
+
+        # Clear bounding box selection for Assays
+        self._clear_bbox_selection("Assays")
+
     def _on_company_search_text_changed(self, text: str):
         """Handle company search text changes with debouncing."""
         self._current_company_query = text

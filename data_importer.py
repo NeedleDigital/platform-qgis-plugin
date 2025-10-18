@@ -414,23 +414,25 @@ class DataImporter:
 
     def _handle_data_import_request(self, tab_name, layer_name, color):
         """Handle data import request with intelligent large dataset optimization.
-        
+
         This method manages the complete data import workflow including:
         1. Data validation and retrieval
         2. Automatic OpenStreetMap base layer addition
         3. Large dataset detection and user warnings
         4. Performance optimization through chunked processing
         5. Memory management for large imports
-        
+        6. Specialized trace visualization for assay data
+
         Args:
             tab_name (str): Source tab name ('Holes' or 'Assays')
             layer_name (str): Name for the new QGIS layer
             color (QColor): Color for point styling in the layer
-            
+
         The method automatically handles:
         - Small datasets (<5000 records): Direct import
         - Medium datasets (5000-50000 records): Chunked import with progress
         - Large datasets (50000+ records): User warning with import options
+        - Assay data: Trace line visualization with depth intervals
         """
         try:
             # Get data from data manager - includes both data rows and column headers
@@ -450,6 +452,9 @@ class DataImporter:
                 pass
             else:
                 pass
+
+            # Detect if this is assay data with depth intervals
+            is_assay_data = self._is_assay_data(data)
 
             # Large dataset detection - warn users about potential performance impact
             warning_dialog_shown = False
@@ -472,14 +477,40 @@ class DataImporter:
                     record_count = len(data)
                 # If IMPORT_ALL, continue with full dataset
 
-            # Use chunked import for datasets > CHUNKED_IMPORT_THRESHOLD records
-            if record_count > CHUNKED_IMPORT_THRESHOLD:
+            # For assay data, use trace visualization with progress dialog
+            if is_assay_data:
+                element = self._extract_element_from_data(data)
+
+                # Show progress dialog for large assay datasets
+                if record_count > CHUNKED_IMPORT_THRESHOLD:
+                    progress_dialog = ImportProgressDialog(record_count, self.dlg)
+                    progress_dialog.show()
+                    progress_dialog.update_progress(0, "Creating trace visualization...")
+
+                    try:
+                        success, message = self.layer_manager.create_assay_trace_layer(
+                            layer_name, data, color, element
+                        )
+                        progress_dialog.finish_import(success, record_count if success else 0, message)
+                        self._handle_import_result(success, message, warning_dialog_shown)
+                    except Exception as e:
+                        error_msg = f"Trace visualization failed: {str(e)}"
+                        progress_dialog.finish_import(False, 0, error_msg)
+                        self.dlg.show_error(error_msg)
+                else:
+                    # Small dataset - no progress dialog
+                    success, message = self.layer_manager.create_assay_trace_layer(
+                        layer_name, data, color, element
+                    )
+                    self._handle_import_result(success, message, warning_dialog_shown)
+            # For non-assay data, use point layers with optional chunking
+            elif record_count > CHUNKED_IMPORT_THRESHOLD:
                 self._perform_chunked_import(data, layer_name, color, record_count, warning_dialog_shown)
             else:
                 # Use regular import for small datasets
                 success, message = self.layer_manager.create_point_layer(layer_name, data, color)
                 self._handle_import_result(success, message, warning_dialog_shown)
-            
+
         except Exception as e:
             error_msg = f"Data import error: {str(e)}"
             log_error(error_msg)
@@ -532,6 +563,68 @@ class DataImporter:
                 self.dlg.show_plugin_message(message, "success", 5000)
         else:
             self.dlg.show_error(message)
+
+    def _is_assay_data(self, data):
+        """Detect if data is assay data with depth intervals.
+
+        Args:
+            data: List of data records
+
+        Returns:
+            bool: True if data has from_depth and to_depth fields
+        """
+        if not data or len(data) == 0:
+            return False
+
+        # Check first record for depth fields
+        first_record = data[0]
+        has_from_depth = 'from_depth' in first_record
+        has_to_depth = 'to_depth' in first_record
+
+        return has_from_depth and has_to_depth
+
+    def _extract_element_from_data(self, data):
+        """Extract element name from assay data.
+
+        Looks for element fields (e.g., 'au', 'cu', 'fe') in the data.
+
+        Args:
+            data: List of assay data records
+
+        Returns:
+            str: Element name (e.g., 'Au', 'Cu') or 'Value' if not found
+        """
+        if not data or len(data) == 0:
+            return 'Value'
+
+        # Common element symbols in lowercase
+        common_elements = [
+            'au', 'ag', 'cu', 'pb', 'zn', 'fe', 'ni', 'co', 'pt', 'pd',
+            'mo', 'sn', 'w', 'li', 'be', 'ta', 'nb', 're', 'u', 'th'
+        ]
+
+        # Check first record for element fields
+        first_record = data[0]
+        for key in first_record.keys():
+            key_lower = key.lower()
+            if key_lower in common_elements:
+                # Capitalize element symbol
+                return key.upper()
+
+        # Fallback: look for any numeric field that's not depth/coordinate
+        exclude_fields = ['from_depth', 'to_depth', 'lat', 'lon', 'latitude', 'longitude',
+                         'hole_id', 'sample_id', 'max_depth']
+        for key in first_record.keys():
+            if key.lower() not in exclude_fields:
+                value = first_record[key]
+                # Check if it's numeric
+                try:
+                    float(value)
+                    return key.title()
+                except (ValueError, TypeError):
+                    continue
+
+        return 'Value'
     
     def _handle_cancel_request(self):
         """Handle cancel request."""
