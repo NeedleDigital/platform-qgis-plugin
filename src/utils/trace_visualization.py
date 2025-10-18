@@ -128,15 +128,25 @@ def create_trace_line_geometry(
 
 def calculate_value_quantiles(data: List[Dict[str, Any]], value_field: str) -> List[float]:
     """
-    Calculate quantile breakpoints for graduated color classification.
-    Uses 99th percentile as maximum to remove outliers.
+    Calculate statistical breakpoints for geological data classification.
+
+    Uses mean and standard deviation to define background vs anomaly ranges,
+    following industry best practices for geochemical data visualization.
 
     Args:
         data: List of records
         value_field: Field name containing numeric values
 
     Returns:
-        List of 5 breakpoints [min, 25%, 50%, 75%, 99%]
+        List of 7 breakpoints [min, mean, mean+1σ, mean+2σ, p95, p98, p99]
+
+    Classification Scheme:
+        - Background Low: min → mean
+        - Background Normal: mean → mean + 1σ
+        - Elevated: mean + 1σ → mean + 2σ
+        - Anomalous: mean + 2σ → 95th percentile
+        - High Anomaly: 95th → 98th percentile
+        - Ore Grade: 98th → 99th percentile
     """
     values = []
     for record in data:
@@ -147,24 +157,43 @@ def calculate_value_quantiles(data: List[Dict[str, Any]], value_field: str) -> L
             except (ValueError, TypeError):
                 pass
 
-    if not values or len(values) < 4:
+    if not values or len(values) < 10:
         # Return default ranges if insufficient data
-        return [0, 1, 2, 3, 4]
+        return [0, 1, 2, 3, 4, 5, 6]
 
     # Sort values
     values.sort()
     n = len(values)
 
-    # Calculate quantiles manually (no numpy dependency)
-    q0 = values[0]
-    q25 = values[n // 4]
-    q50 = values[n // 2]
-    q75 = values[3 * n // 4]
-    # Use 99th percentile instead of max to exclude outliers
-    q99_index = int(n * 0.99)
-    q99 = values[min(q99_index, n - 1)]
+    # Calculate statistics
+    minimum = values[0]
 
-    return [q0, q25, q50, q75, q99]
+    # Calculate mean
+    mean = sum(values) / n
+
+    # Calculate standard deviation
+    variance = sum((x - mean) ** 2 for x in values) / n
+    std_dev = variance ** 0.5
+
+    # Calculate mean + 1σ and mean + 2σ
+    mean_plus_1sigma = mean + std_dev
+    mean_plus_2sigma = mean + (2 * std_dev)
+
+    # Calculate high percentiles
+    p95_index = int(n * 0.95)
+    p98_index = int(n * 0.98)
+    p99_index = int(n * 0.99)
+
+    p95 = values[min(p95_index, n - 1)]
+    p98 = values[min(p98_index, n - 1)]
+    p99 = values[min(p99_index, n - 1)]
+
+    # Ensure values are monotonically increasing
+    # (mean+2σ might exceed p95 in some distributions)
+    mean_plus_1sigma = min(mean_plus_1sigma, p95)
+    mean_plus_2sigma = min(mean_plus_2sigma, p95)
+
+    return [minimum, mean, mean_plus_1sigma, mean_plus_2sigma, p95, p98, p99]
 
 
 def apply_graduated_trace_symbology(
@@ -174,38 +203,62 @@ def apply_graduated_trace_symbology(
     line_width: float = 2.0
 ) -> None:
     """
-    Apply graduated color rendering to trace layer based on element values.
+    Apply graduated color rendering to trace layer based on statistical classification.
 
-    Uses a green -> yellow -> orange -> red color ramp for concentration.
+    Uses a blue → purple sequential color ramp following geological best practices,
+    with colors representing statistical significance of assay values.
 
     Args:
         layer: Vector layer to style
         value_field: Field name for graduation
-        quantiles: Value breakpoints [min, q25, q50, q75, max]
+        quantiles: Statistical breakpoints [min, mean, mean+1σ, mean+2σ, p95, p98, p99]
         line_width: Width of trace lines in pixels
+
+    Color Scheme:
+        - Dark Blue: Background Low (min → mean)
+        - Light Blue: Background Normal (mean → mean+1σ)
+        - Yellow: Elevated (mean+1σ → mean+2σ)
+        - Orange: Anomalous (mean+2σ → 95%)
+        - Red: High Anomaly (95% → 98%)
+        - Purple: Ore Grade (98% → 99%)
     """
-    # Define color ramp (green -> yellow -> orange -> red)
+    # Define sequential color ramp (blue → purple) with geological meaning
     colors = [
-        QColor(76, 175, 80),    # Green (low values)
-        QColor(255, 235, 59),   # Yellow (low-medium)
-        QColor(255, 152, 0),    # Orange (medium-high)
-        QColor(244, 67, 54)     # Red (high values)
+        QColor(25, 118, 210),   # Dark Blue - Background Low
+        QColor(100, 181, 246),  # Light Blue - Background Normal
+        QColor(255, 235, 59),   # Yellow - Elevated
+        QColor(255, 152, 0),    # Orange - Anomalous
+        QColor(244, 67, 54),    # Red - High Anomaly
+        QColor(156, 39, 176)    # Purple - Ore Grade
+    ]
+
+    # Define labels with geological meaning
+    labels = [
+        "Background Low (< Mean)",
+        "Normal (Mean to +1σ)",
+        "Elevated (+1σ to +2σ)",
+        "Anomalous (+2σ to 95%)",
+        "High Anomaly (95-98%)",
+        "Ore Grade (98-99%)"
     ]
 
     # Create renderer ranges
     ranges = []
-    for i in range(4):
+    for i in range(6):
         symbol = QgsLineSymbol.createSimple({
             'color': colors[i].name(),
             'width': str(line_width),
             'capstyle': 'round'
         })
 
+        # Format label with value range and geological meaning
+        label = f"{labels[i]}: {quantiles[i]:.1f} - {quantiles[i + 1]:.1f}"
+
         range_obj = QgsRendererRange(
             quantiles[i],
             quantiles[i + 1],
             symbol,
-            f"{quantiles[i]:.2f} - {quantiles[i + 1]:.2f}"
+            label
         )
         ranges.append(range_obj)
 

@@ -339,6 +339,65 @@ class QGISLayerManager:
         except Exception as e:
             log_warning(f"Failed to setup hover tooltips: {e}")
 
+    def _setup_trace_tooltips(self, layer: QgsVectorLayer, element: str, value_field: str = 'assay_value'):
+        """Setup hover tooltips for trace lines showing depth interval and assay value.
+
+        Args:
+            layer: Trace lines vector layer
+            element: Element name (e.g., 'Au', 'Cu')
+            value_field: Field name containing assay values (default: 'assay_value')
+        """
+        try:
+            field_names = [field.name() for field in layer.fields()]
+
+            # Build tooltip with depth, assay value, and metadata
+            tooltip_parts = []
+
+            # Depth interval (from_depth and to_depth)
+            if 'from_depth' in field_names and 'to_depth' in field_names:
+                tooltip_parts.append('<b>Depth Interval:</b> [% "from_depth" %]m - [% "to_depth" %]m')
+
+            # Assay value (use detected value field)
+            if value_field in field_names:
+                tooltip_parts.append(f'<b>{element} Value:</b> [% "{value_field}" %] ppm')
+
+            # Interval length
+            if 'interval_length' in field_names:
+                tooltip_parts.append('<b>Sample Length:</b> [% "interval_length" %]m')
+
+            # Hole ID
+            if 'hole_id' in field_names:
+                tooltip_parts.append('<b>Hole ID:</b> [% "hole_id" %]')
+
+            # Company name
+            if 'company_name' in field_names:
+                tooltip_parts.append('<b>Company:</b> [% "company_name" %]')
+
+            # Element name
+            if 'assay_element' in field_names:
+                tooltip_parts.append('<b>Element:</b> [% "assay_element" %]')
+
+            # Create HTML tooltip with clean styling
+            tooltip_html = f"""
+            <div style="background-color: #ffffff;
+                        border: 2px solid #333333;
+                        border-radius: 8px;
+                        padding: 10px 14px;
+                        font-family: Arial, sans-serif;
+                        font-size: 13px;
+                        color: #333333;
+                        line-height: 1.6;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+                        max-width: 300px;">
+                {'<br>'.join(tooltip_parts)}
+            </div>
+            """
+
+            layer.setMapTipTemplate(tooltip_html)
+
+        except Exception as e:
+            log_warning(f"Failed to setup trace tooltips: {e}")
+
     def _setup_location_tooltips(self, layer: QgsVectorLayer):
         """Setup hover tooltips (map tips) for location-only data showing latitude and longitude."""
         try:
@@ -613,7 +672,8 @@ class QGISLayerManager:
         data: List[Dict[str, Any]],
         color: Optional[QColor] = None,
         element: str = "Unknown",
-        value_field: str = "assay_value"
+        value_field: str = "assay_value",
+        progress_callback: Optional[callable] = None
     ) -> Tuple[bool, str]:
         """
         Create drill hole trace visualization layers for assay data.
@@ -628,6 +688,7 @@ class QGISLayerManager:
             color: Optional color for styling
             element: Element name for the assay data
             value_field: Field name containing assay values (default: 'assay_value')
+            progress_callback: Optional callback function(processed_count, message) for progress updates
 
         Returns:
             Tuple of (success, message)
@@ -649,6 +710,10 @@ class QGISLayerManager:
             print(f"First record: {data[0]}")
             print(f"Value field: {value_field}")
 
+            # Report progress: Starting
+            if progress_callback:
+                progress_callback(0, "Grouping samples by collar...")
+
             # Group samples by drill hole (unique lat/lon)
             holes = group_by_collar(data)
             print(f"Grouped into {len(holes)} collar locations")
@@ -657,6 +722,10 @@ class QGISLayerManager:
             max_depth = get_max_depth_from_data(data)
             print(f"Max depth: {max_depth}")
             print("=" * 50)
+
+            # Report progress: 10%
+            if progress_callback:
+                progress_callback(int(len(data) * 0.1), "Creating collar points layer...")
 
             # Create collar points layer
             collar_success, collar_layer = self._create_collar_points_layer(
@@ -669,12 +738,17 @@ class QGISLayerManager:
             if not collar_success:
                 return False, f"Failed to create collar layer: {collar_layer}"
 
-            # Create trace lines layer
+            # Report progress: 30%
+            if progress_callback:
+                progress_callback(int(len(data) * 0.3), "Creating trace lines layer...")
+
+            # Create trace lines layer with progress updates
             trace_success, trace_layer = self._create_trace_lines_layer(
                 f"{layer_name} - Traces",
                 data,
                 element,
-                max_depth
+                max_depth,
+                progress_callback
             )
 
             if not trace_success:
@@ -689,10 +763,21 @@ class QGISLayerManager:
             trace_layer.setMaximumScale(1)  # Show when zoomed in (small scale number)
             trace_layer.setMinimumScale(TRACE_SCALE_THRESHOLD)  # Hide when zoomed out (large scale number)
 
+            # Report progress: 85%
+            if progress_callback:
+                progress_callback(int(len(data) * 0.85), "Applying color classification...")
+
             # Apply graduated symbology to traces
             if value_field:
                 quantiles = calculate_value_quantiles(data, value_field)
                 apply_graduated_trace_symbology(trace_layer, value_field, quantiles, TRACE_LINE_WIDTH)
+
+            # Setup hover tooltips for trace lines
+            self._setup_trace_tooltips(trace_layer, element, value_field)
+
+            # Report progress: 95%
+            if progress_callback:
+                progress_callback(int(len(data) * 0.95), "Adding layers to map...")
 
             # Create layer group and add layers
             root = QgsProject.instance().layerTreeRoot()
@@ -700,9 +785,38 @@ class QGISLayerManager:
             group.addLayer(collar_layer)
             group.addLayer(trace_layer)
 
-            # Zoom to collar layer if dataset not too large
-            if self.iface and len(holes) <= AUTO_ZOOM_THRESHOLD:
-                self._zoom_to_layer(collar_layer)
+            # Report progress: 100%
+            if progress_callback:
+                progress_callback(len(data), "Zooming to layer...")
+
+            # Zoom to collar layer (always zoom)
+            if self.iface:
+                # Force update the layer extent before zooming
+                collar_layer.updateExtents()
+
+                # Get extent and add buffer
+                extent = collar_layer.extent()
+                print(f"Collar layer extent: {extent}")
+                print(f"Extent is empty: {extent.isEmpty()}")
+
+                if not extent.isEmpty():
+                    # Add 10% buffer around the data
+                    width = extent.width()
+                    height = extent.height()
+                    buffer_x = width * 0.1
+                    buffer_y = height * 0.1
+                    extent.setXMinimum(extent.xMinimum() - buffer_x)
+                    extent.setXMaximum(extent.xMaximum() + buffer_x)
+                    extent.setYMinimum(extent.yMinimum() - buffer_y)
+                    extent.setYMaximum(extent.yMaximum() + buffer_y)
+
+                    # Set extent and refresh canvas
+                    map_canvas = self.iface.mapCanvas()
+                    map_canvas.setExtent(extent)
+                    map_canvas.refresh()
+                    print(f"Zoomed to extent with buffer: {extent}")
+                else:
+                    print("WARNING: Collar layer extent is empty - cannot zoom")
 
             return True, f"Successfully created trace visualization: {len(holes)} collars, {len(data)} intervals"
 
@@ -789,7 +903,16 @@ class QGISLayerManager:
             hole_id = 1
             for (lat, lon), samples in holes.items():
                 feature = QgsFeature(layer.fields())
-                feature.setGeometry(QgsGeometry.fromPointXY(QgsPointXY(lon, lat)))
+
+                # Create point geometry
+                point_geom = QgsGeometry.fromPointXY(QgsPointXY(lon, lat))
+                feature.setGeometry(point_geom)
+
+                # Debug first feature
+                if hole_id == 1:
+                    print(f"First collar point: lat={lat}, lon={lon}")
+                    print(f"Geometry valid: {point_geom.isGeosValid()}")
+                    print(f"Geometry type: {point_geom.type()}")
 
                 # Calculate stats for this hole using the detected value field
                 values = []
@@ -808,9 +931,13 @@ class QGISLayerManager:
 
             # Commit changes
             layer.commitChanges()
+
+            # Force extent recalculation
             layer.updateExtents()
 
             print(f"Collar layer feature count: {layer.featureCount()}")
+            print(f"Collar layer extent after commit: {layer.extent()}")
+            print(f"Collar layer extent isEmpty: {layer.extent().isEmpty()}")
 
             # Apply styling
             self._apply_layer_styling(layer, color)
@@ -829,9 +956,21 @@ class QGISLayerManager:
         layer_name: str,
         data: List[Dict[str, Any]],
         element: str,
-        max_depth: Optional[float]
+        max_depth: Optional[float],
+        progress_callback: Optional[callable] = None
     ) -> Tuple[bool, Optional[QgsVectorLayer]]:
-        """Create line layer for drill hole trace intervals."""
+        """Create line layer for drill hole trace intervals with chunked progress updates.
+
+        Args:
+            layer_name: Name for the trace lines layer
+            data: List of assay records
+            element: Element name
+            max_depth: Maximum depth value
+            progress_callback: Optional callback for progress updates
+
+        Returns:
+            Tuple of (success, layer or None)
+        """
         try:
             from .trace_visualization import create_trace_line_geometry
 
@@ -857,8 +996,11 @@ class QGISLayerManager:
             # Start editing
             layer.startEditing()
 
-            # Create line features
-            for record in data:
+            # Create line features with progress updates
+            total_records = len(data)
+            chunk_size = 1000  # Update progress every 1000 records
+
+            for idx, record in enumerate(data):
                 feature = QgsFeature(layer.fields())
 
                 # Create trace line geometry
@@ -884,6 +1026,12 @@ class QGISLayerManager:
                         feature.setAttribute(field_name, record.get(field_name))
 
                 layer.addFeature(feature)
+
+                # Update progress every chunk_size records
+                if progress_callback and (idx + 1) % chunk_size == 0:
+                    # Progress from 30% to 85% during trace creation
+                    progress_pct = 0.3 + (0.55 * (idx + 1) / total_records)
+                    progress_callback(int(total_records * progress_pct), f"Creating trace lines ({idx + 1:,}/{total_records:,})...")
 
             # Commit changes
             layer.commitChanges()

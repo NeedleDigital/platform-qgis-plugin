@@ -487,12 +487,21 @@ class DataImporter:
                     progress_dialog.show()
                     progress_dialog.update_progress(0, "Creating trace visualization...")
 
+                    # Define progress callback for trace layer creation
+                    def progress_callback(processed_count, message):
+                        if progress_dialog.wasCanceled():
+                            raise InterruptedError("Import cancelled by user")
+                        progress_dialog.update_progress(processed_count, message)
+
                     try:
                         success, message = self.layer_manager.create_assay_trace_layer(
-                            layer_name, data, color, element
+                            layer_name, data, color, element, "assay_value", progress_callback
                         )
                         progress_dialog.finish_import(success, record_count if success else 0, message)
                         self._handle_import_result(success, message, warning_dialog_shown)
+                    except InterruptedError:
+                        progress_dialog.finish_import(False, 0, "Import was cancelled by user.")
+                        self.dlg.show_info("Import was cancelled.")
                     except Exception as e:
                         error_msg = f"Trace visualization failed: {str(e)}"
                         progress_dialog.finish_import(False, 0, error_msg)
