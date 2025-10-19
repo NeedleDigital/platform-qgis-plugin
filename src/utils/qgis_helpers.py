@@ -36,7 +36,8 @@ from qgis.core import (
     QgsVectorLayer, QgsRasterLayer, QgsFeature, QgsGeometry, QgsPoint, QgsField,
     QgsProject, QgsSymbol, QgsSingleSymbolRenderer, QgsMessageLog,
     Qgis, QgsCoordinateReferenceSystem, QgsCoordinateTransform, QgsPointXY,
-    QgsGraduatedSymbolRenderer, QgsRendererRange, QgsLineSymbol, QgsLayerTreeGroup
+    QgsGraduatedSymbolRenderer, QgsRendererRange, QgsLineSymbol, QgsLayerTreeGroup,
+    QgsVectorDataProvider
 )
 from qgis.PyQt.QtCore import QVariant, QMetaType
 from qgis.PyQt.QtGui import QColor
@@ -93,7 +94,7 @@ class QGISLayerManager:
         self.iface = iface
     
     def create_point_layer(self, layer_name: str, data: List[Dict[str, Any]],
-                          color: Optional[QColor] = None) -> Tuple[bool, str]:
+                          color: Optional[QColor] = None, point_size: float = 3.0) -> Tuple[bool, str]:
         """
         Create a point layer from data.
 
@@ -134,8 +135,8 @@ class QGISLayerManager:
             provider.addFeatures(features)
             layer.updateExtents()
 
-            # Apply styling
-            self._apply_layer_styling(layer, color)
+            # Apply styling with custom point size
+            self._apply_layer_styling(layer, color, point_size)
             
             # Add to project
             QgsProject.instance().addMapLayer(layer)
@@ -242,16 +243,19 @@ class QGISLayerManager:
         
         return lat, lon
     
-    def _apply_layer_styling(self, layer: QgsVectorLayer, color: Optional[QColor] = None):
+    def _apply_layer_styling(self, layer: QgsVectorLayer, color: Optional[QColor] = None, point_size: float = None):
         """Apply styling to the layer."""
         try:
             # Use provided color or default
             point_color = color or QColor(DEFAULT_LAYER_STYLE['point_color'])
 
+            # Use provided point size or default
+            size = point_size if point_size is not None else DEFAULT_LAYER_STYLE['point_size']
+
             # Create symbol
             symbol = QgsSymbol.defaultSymbol(layer.geometryType())
             symbol.setColor(point_color)
-            symbol.setSize(DEFAULT_LAYER_STYLE['point_size'])
+            symbol.setSize(size)
             symbol.setOpacity(DEFAULT_LAYER_STYLE['point_transparency'])
 
             # Apply renderer
@@ -565,7 +569,8 @@ class QGISLayerManager:
     
     def create_point_layer_chunked(self, layer_name: str, data: List[Dict[str, Any]],
                                   color: Optional[QColor] = None,
-                                  progress_callback: Optional[callable] = None) -> Tuple[bool, str]:
+                                  progress_callback: Optional[callable] = None,
+                                  point_size: float = 3.0) -> Tuple[bool, str]:
         """
         Create a point layer from large dataset using chunked processing.
 
@@ -647,7 +652,7 @@ class QGISLayerManager:
             layer.updateExtents()
 
             # Apply styling
-            self._apply_layer_styling(layer, color)
+            self._apply_layer_styling(layer, color, point_size)
             
             # Add to project
             QgsProject.instance().addMapLayer(layer)
@@ -673,7 +678,12 @@ class QGISLayerManager:
         color: Optional[QColor] = None,
         element: str = "Unknown",
         value_field: str = "assay_value",
-        progress_callback: Optional[callable] = None
+        progress_callback: Optional[callable] = None,
+        trace_range_config=None,
+        point_size: float = 3.0,
+        collar_layer_name: Optional[str] = None,
+        trace_layer_name: Optional[str] = None,
+        group_name: Optional[str] = None
     ) -> Tuple[bool, str]:
         """
         Create drill hole trace visualization layers for assay data.
@@ -689,6 +699,7 @@ class QGISLayerManager:
             element: Element name for the assay data
             value_field: Field name containing assay values (default: 'assay_value')
             progress_callback: Optional callback function(processed_count, message) for progress updates
+            trace_range_config: TraceRangeConfiguration for custom range visualization (optional)
 
         Returns:
             Tuple of (success, message)
@@ -696,7 +707,7 @@ class QGISLayerManager:
         try:
             from .trace_visualization import (
                 group_by_collar, get_max_depth_from_data,
-                create_trace_line_geometry, calculate_value_quantiles,
+                create_trace_line_geometry, calculate_trace_breakpoints,
                 apply_graduated_trace_symbology
             )
 
@@ -728,11 +739,13 @@ class QGISLayerManager:
                 progress_callback(int(len(data) * 0.1), "Creating collar points layer...")
 
             # Create collar points layer
+            collar_name = collar_layer_name or f"{layer_name} - Collars"
             collar_success, collar_layer = self._create_collar_points_layer(
-                f"{layer_name} - Collars",
+                collar_name,
                 holes,
                 color or QColor(0, 120, 255),
-                value_field
+                value_field,
+                point_size
             )
 
             if not collar_success:
@@ -743,8 +756,9 @@ class QGISLayerManager:
                 progress_callback(int(len(data) * 0.3), "Creating trace lines layer...")
 
             # Create trace lines layer with progress updates
+            trace_name = trace_layer_name or f"{layer_name} - Traces"
             trace_success, trace_layer = self._create_trace_lines_layer(
-                f"{layer_name} - Traces",
+                trace_name,
                 data,
                 element,
                 max_depth,
@@ -767,10 +781,10 @@ class QGISLayerManager:
             if progress_callback:
                 progress_callback(int(len(data) * 0.85), "Applying color classification...")
 
-            # Apply graduated symbology to traces
+            # Apply graduated symbology to traces with custom range configuration
             if value_field:
-                quantiles = calculate_value_quantiles(data, value_field)
-                apply_graduated_trace_symbology(trace_layer, value_field, quantiles, TRACE_LINE_WIDTH)
+                breakpoints = calculate_trace_breakpoints(data, value_field, trace_range_config)
+                apply_graduated_trace_symbology(trace_layer, value_field, breakpoints, TRACE_LINE_WIDTH, trace_range_config)
 
             # Setup hover tooltips for trace lines
             self._setup_trace_tooltips(trace_layer, element, value_field)
@@ -781,7 +795,8 @@ class QGISLayerManager:
 
             # Create layer group and add layers
             root = QgsProject.instance().layerTreeRoot()
-            group = root.insertGroup(0, f"{element} Assays")
+            group_layer_name = group_name or f"{element} Assays"
+            group = root.insertGroup(0, group_layer_name)
             group.addLayer(collar_layer)
             group.addLayer(trace_layer)
 
@@ -873,9 +888,15 @@ class QGISLayerManager:
         layer_name: str,
         holes: Dict[Tuple[float, float], List[Dict]],
         color: QColor,
-        value_field: Optional[str] = None
+        value_field: Optional[str] = None,
+        point_size: float = 3.0
     ) -> Tuple[bool, Optional[QgsVectorLayer]]:
-        """Create point layer for drill hole collars."""
+        """Create point layer for drill hole collars.
+
+        IMPORTANT: For QGIS memory layers, use provider.addFeatures() directly.
+        DO NOT use layer.startEditing() / layer.commitChanges() - that pattern is
+        for file-based layers only (shapefiles, GeoPackage, etc.).
+        """
         try:
             crs = QgsCoordinateReferenceSystem("EPSG:4326")
             layer = QgsVectorLayer(f"Point?crs={crs.authid()}", layer_name, "memory")
@@ -885,21 +906,22 @@ class QGISLayerManager:
 
             provider = layer.dataProvider()
 
-            # Define fields
+            # Define fields (pass sample values, not QVariant types)
             fields = [
-                create_qgs_field_compatible('hole_id', QVariant.String),
-                create_qgs_field_compatible('lat', QVariant.Double),
-                create_qgs_field_compatible('lon', QVariant.Double),
-                create_qgs_field_compatible('sample_count', QVariant.Int),
-                create_qgs_field_compatible('max_value', QVariant.Double)
+                create_qgs_field_compatible('hole_id', "DH0001"),      # String sample
+                create_qgs_field_compatible('lat', 0.0),               # Double sample
+                create_qgs_field_compatible('lon', 0.0),               # Double sample
+                create_qgs_field_compatible('sample_count', 0),        # Int sample
+                create_qgs_field_compatible('max_value', 0.0)          # Double sample
             ]
             provider.addAttributes(fields)
             layer.updateFields()
 
-            # Start editing
-            layer.startEditing()
+            # Add layer to project BEFORE adding features (some QGIS versions require this)
+            QgsProject.instance().addMapLayer(layer, False)
 
-            # Create features
+            # Build all features first, then add in batch (same pattern as trace lines)
+            all_features = []
             hole_id = 1
             for (lat, lon), samples in holes.items():
                 feature = QgsFeature(layer.fields())
@@ -913,6 +935,7 @@ class QGISLayerManager:
                     print(f"First collar point: lat={lat}, lon={lon}")
                     print(f"Geometry valid: {point_geom.isGeosValid()}")
                     print(f"Geometry type: {point_geom.type()}")
+                    print(f"WKT: {point_geom.asWkt()}")
 
                 # Calculate stats for this hole using the detected value field
                 values = []
@@ -920,31 +943,66 @@ class QGISLayerManager:
                     values = [s.get(value_field, 0) for s in samples if s.get(value_field) is not None]
                 max_val = max(values) if values else 0
 
-                feature.setAttribute('hole_id', f"DH{hole_id:04d}")
-                feature.setAttribute('lat', lat)
-                feature.setAttribute('lon', lon)
-                feature.setAttribute('sample_count', len(samples))
-                feature.setAttribute('max_value', max_val)
+                # Prepare attribute data
+                attr_data = {
+                    'hole_id': f"DH{hole_id:04d}",
+                    'lat': lat,
+                    'lon': lon,
+                    'sample_count': len(samples),
+                    'max_value': max_val
+                }
 
-                layer.addFeature(feature)
+                # Set attributes by iterating over fields (same pattern as trace lines)
+                for field in layer.fields():
+                    field_name = field.name()
+                    if field_name in attr_data:
+                        feature.setAttribute(field_name, attr_data[field_name])
+
+                # Debug first feature attributes after setting
+                if hole_id == 1:
+                    print(f"First feature attributes after setting: {feature.attributes()}")
+                    print(f"Feature is valid: {feature.isValid()}")
+                    for i, field in enumerate(layer.fields()):
+                        print(f"  Field {i}: {field.name()} = {feature.attribute(field.name())}")
+
+                all_features.append(feature)
                 hole_id += 1
 
-            # Commit changes
-            layer.commitChanges()
+            # Validate a few features before adding
+            print(f"Total features to add: {len(all_features)}")
+            if all_features:
+                for i in range(min(3, len(all_features))):
+                    f = all_features[i]
+                    print(f"Feature {i}: geom_valid={f.geometry().isGeosValid()}, has_geom={f.hasGeometry()}, attr_count={len(f.attributes())}")
+
+            # Add all features to provider in batch
+            success, added_features = provider.addFeatures(all_features)
+            print(f"Collar add features result: {success}, features added: {len(added_features) if success else 0}")
+
+            # Check for errors
+            if not success:
+                # Try to get more detailed error info
+                print(f"Provider capabilities: {provider.capabilities()}")
+                print(f"Layer is valid: {layer.isValid()}")
+                print(f"Layer CRS: {layer.crs().authid()}")
+                print(f"Provider supports AddFeatures: {provider.capabilities() & QgsVectorDataProvider.AddFeatures}")
+
+                # Try adding just the first feature to see if there's a specific error
+                print(f"\nTrying to add first feature alone...")
+                test_success, test_added = provider.addFeatures([all_features[0]])
+                print(f"Single feature add result: {test_success}")
 
             # Force extent recalculation
             layer.updateExtents()
 
             print(f"Collar layer feature count: {layer.featureCount()}")
-            print(f"Collar layer extent after commit: {layer.extent()}")
+            print(f"Collar layer extent after adding: {layer.extent()}")
             print(f"Collar layer extent isEmpty: {layer.extent().isEmpty()}")
 
-            # Apply styling
-            self._apply_layer_styling(layer, color)
+            # Apply styling with custom point size
+            self._apply_layer_styling(layer, color, point_size)
 
-            # Add to project
-            QgsProject.instance().addMapLayer(layer, False)  # Don't add to legend yet
-
+            # Layer already added to project above (before adding features)
             return True, layer
 
         except Exception as e:
@@ -960,6 +1018,10 @@ class QGISLayerManager:
         progress_callback: Optional[callable] = None
     ) -> Tuple[bool, Optional[QgsVectorLayer]]:
         """Create line layer for drill hole trace intervals with chunked progress updates.
+
+        IMPORTANT: For QGIS memory layers, use provider.addFeatures() directly.
+        DO NOT use layer.startEditing() / layer.commitChanges() - that pattern is
+        for file-based layers only (shapefiles, GeoPackage, etc.).
 
         Args:
             layer_name: Name for the trace lines layer
@@ -993,13 +1055,11 @@ class QGISLayerManager:
                 provider.addAttributes(fields)
                 layer.updateFields()
 
-            # Start editing
-            layer.startEditing()
-
-            # Create line features with progress updates
+            # Create line features with progress updates (use provider.addFeatures for memory layers)
             total_records = len(data)
-            chunk_size = 1000  # Update progress every 1000 records
+            chunk_size = 1000  # Update progress and add features in chunks
 
+            all_features = []
             for idx, record in enumerate(data):
                 feature = QgsFeature(layer.fields())
 
@@ -1025,7 +1085,7 @@ class QGISLayerManager:
                     else:
                         feature.setAttribute(field_name, record.get(field_name))
 
-                layer.addFeature(feature)
+                all_features.append(feature)
 
                 # Update progress every chunk_size records
                 if progress_callback and (idx + 1) % chunk_size == 0:
@@ -1033,8 +1093,10 @@ class QGISLayerManager:
                     progress_pct = 0.3 + (0.55 * (idx + 1) / total_records)
                     progress_callback(int(total_records * progress_pct), f"Creating trace lines ({idx + 1:,}/{total_records:,})...")
 
-            # Commit changes
-            layer.commitChanges()
+            # Add all features to provider (correct pattern for memory layers)
+            success, added_features = provider.addFeatures(all_features)
+            print(f"Trace lines add features result: {success}, features added: {len(added_features) if success else 0}")
+
             layer.updateExtents()
 
             print(f"Trace layer feature count: {layer.featureCount()}")

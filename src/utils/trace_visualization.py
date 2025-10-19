@@ -126,9 +126,156 @@ def create_trace_line_geometry(
     return QgsGeometry.fromPolylineXY([start_point, end_point])
 
 
+def evaluate_boundary_formula(
+    formula,
+    data_stats: Dict[str, float]
+) -> float:
+    """
+    Evaluate a boundary formula to get numeric value.
+
+    Args:
+        formula: BoundaryFormula object
+        data_stats: Dictionary with keys: 'mean', 'std_dev', 'min', 'max', 'percentiles'
+
+    Returns:
+        Numeric value for the boundary
+    """
+    from ..config.trace_ranges import RangeType
+
+    if formula.formula_type == RangeType.DIRECT_PPM:
+        return formula.value
+
+    elif formula.formula_type == RangeType.MEAN_MULTIPLIER:
+        return data_stats['mean'] * formula.value
+
+    elif formula.formula_type == RangeType.STDDEV_MULTIPLIER:
+        return data_stats['mean'] + (data_stats['std_dev'] * formula.value)
+
+    elif formula.formula_type == RangeType.PERCENTILE:
+        # Get percentile from precomputed percentiles dict
+        percentiles = data_stats.get('percentiles', {})
+        p_value = int(formula.value)
+        if p_value in percentiles:
+            return percentiles[p_value]
+        else:
+            # Fallback: approximate from available percentiles
+            # Use max value if percentile not available
+            return data_stats.get('max', 0.0)
+
+    return 0.0
+
+
+def calculate_data_statistics(data: List[Dict[str, Any]], value_field: str) -> Dict[str, float]:
+    """
+    Calculate statistical measures for data.
+
+    Args:
+        data: List of records
+        value_field: Field name containing numeric values
+
+    Returns:
+        Dictionary with statistical measures
+    """
+    values = []
+    for record in data:
+        val = record.get(value_field)
+        if val is not None:
+            try:
+                values.append(float(val))
+            except (ValueError, TypeError):
+                pass
+
+    if not values or len(values) < 10:
+        # Return default stats if insufficient data
+        return {
+            'min': 0.0,
+            'max': 100.0,
+            'mean': 50.0,
+            'std_dev': 10.0,
+            'percentiles': {50: 50.0, 75: 75.0, 90: 90.0, 95: 95.0, 98: 98.0, 99: 99.0}
+        }
+
+    # Sort values
+    values.sort()
+    n = len(values)
+
+    # Calculate basic stats
+    minimum = values[0]
+    maximum = values[-1]
+    mean = sum(values) / n
+    variance = sum((x - mean) ** 2 for x in values) / n
+    std_dev = variance ** 0.5
+
+    # Calculate percentiles
+    percentiles = {}
+    for p in [50, 75, 90, 95, 98, 99]:
+        p_index = int(n * (p / 100.0))
+        percentiles[p] = values[min(p_index, n - 1)]
+
+    return {
+        'min': minimum,
+        'max': maximum,
+        'mean': mean,
+        'std_dev': std_dev,
+        'percentiles': percentiles
+    }
+
+
+def calculate_trace_breakpoints(
+    data: List[Dict[str, Any]],
+    value_field: str,
+    range_config=None
+) -> List[float]:
+    """
+    Calculate breakpoints for trace visualization based on configuration.
+
+    Args:
+        data: List of records
+        value_field: Field name containing numeric values
+        range_config: TraceRangeConfiguration object (optional, uses industry standard if None)
+
+    Returns:
+        List of breakpoint values matching the range configuration
+    """
+    # Calculate data statistics
+    stats = calculate_data_statistics(data, value_field)
+
+    # If no custom config, use industry standard (backward compatibility)
+    if range_config is None:
+        from ..config.trace_ranges import get_industry_standard_preset
+        range_config = get_industry_standard_preset()
+
+    # Evaluate all boundary formulas
+    breakpoints = []
+
+    # First breakpoint: lower boundary of first range
+    first_lower = evaluate_boundary_formula(range_config.ranges[0].lower_boundary, stats)
+    # Use actual min if first boundary is 0 (common pattern)
+    if first_lower == 0.0:
+        first_lower = stats['min']
+    breakpoints.append(first_lower)
+
+    # Add upper boundary of each range
+    for trace_range in range_config.ranges:
+        upper_value = evaluate_boundary_formula(trace_range.upper_boundary, stats)
+        breakpoints.append(upper_value)
+
+    # Ensure monotonically increasing (fix any formula evaluation issues)
+    for i in range(1, len(breakpoints)):
+        if breakpoints[i] <= breakpoints[i - 1]:
+            # Add small increment to avoid equal values
+            breakpoints[i] = breakpoints[i - 1] + 0.01
+
+    return breakpoints
+
+
+# Keep backward-compatible function name
 def calculate_value_quantiles(data: List[Dict[str, Any]], value_field: str) -> List[float]:
     """
     Calculate statistical breakpoints for geological data classification.
+
+    DEPRECATED: Use calculate_trace_breakpoints() instead for custom range support.
+    This function maintained for backward compatibility with existing code.
 
     Uses mean and standard deviation to define background vs anomaly ranges,
     following industry best practices for geochemical data visualization.
@@ -148,111 +295,56 @@ def calculate_value_quantiles(data: List[Dict[str, Any]], value_field: str) -> L
         - High Anomaly: 95th → 98th percentile
         - Ore Grade: 98th → 99th percentile
     """
-    values = []
-    for record in data:
-        val = record.get(value_field)
-        if val is not None:
-            try:
-                values.append(float(val))
-            except (ValueError, TypeError):
-                pass
-
-    if not values or len(values) < 10:
-        # Return default ranges if insufficient data
-        return [0, 1, 2, 3, 4, 5, 6]
-
-    # Sort values
-    values.sort()
-    n = len(values)
-
-    # Calculate statistics
-    minimum = values[0]
-
-    # Calculate mean
-    mean = sum(values) / n
-
-    # Calculate standard deviation
-    variance = sum((x - mean) ** 2 for x in values) / n
-    std_dev = variance ** 0.5
-
-    # Calculate mean + 1σ and mean + 2σ
-    mean_plus_1sigma = mean + std_dev
-    mean_plus_2sigma = mean + (2 * std_dev)
-
-    # Calculate high percentiles
-    p95_index = int(n * 0.95)
-    p98_index = int(n * 0.98)
-    p99_index = int(n * 0.99)
-
-    p95 = values[min(p95_index, n - 1)]
-    p98 = values[min(p98_index, n - 1)]
-    p99 = values[min(p99_index, n - 1)]
-
-    # Ensure values are monotonically increasing
-    # (mean+2σ might exceed p95 in some distributions)
-    mean_plus_1sigma = min(mean_plus_1sigma, p95)
-    mean_plus_2sigma = min(mean_plus_2sigma, p95)
-
-    return [minimum, mean, mean_plus_1sigma, mean_plus_2sigma, p95, p98, p99]
+    # Use new function with industry standard preset
+    return calculate_trace_breakpoints(data, value_field, None)
 
 
 def apply_graduated_trace_symbology(
     layer: QgsVectorLayer,
     value_field: str,
     quantiles: List[float],
-    line_width: float = 2.0
+    line_width: float = 2.0,
+    range_config=None
 ) -> None:
     """
     Apply graduated color rendering to trace layer based on statistical classification.
 
-    Uses a blue → purple sequential color ramp following geological best practices,
-    with colors representing statistical significance of assay values.
+    Uses custom or default color scheme for trace visualization.
 
     Args:
         layer: Vector layer to style
         value_field: Field name for graduation
-        quantiles: Statistical breakpoints [min, mean, mean+1σ, mean+2σ, p95, p98, p99]
+        quantiles: Statistical breakpoints calculated from data
         line_width: Width of trace lines in pixels
-
-    Color Scheme:
-        - Dark Blue: Background Low (min → mean)
-        - Light Blue: Background Normal (mean → mean+1σ)
-        - Yellow: Elevated (mean+1σ → mean+2σ)
-        - Orange: Anomalous (mean+2σ → 95%)
-        - Red: High Anomaly (95% → 98%)
-        - Purple: Ore Grade (98% → 99%)
+        range_config: TraceRangeConfiguration object (optional, uses industry standard if None)
     """
-    # Define sequential color ramp (blue → purple) with geological meaning
-    colors = [
-        QColor(25, 118, 210),   # Dark Blue - Background Low
-        QColor(100, 181, 246),  # Light Blue - Background Normal
-        QColor(255, 235, 59),   # Yellow - Elevated
-        QColor(255, 152, 0),    # Orange - Anomalous
-        QColor(244, 67, 54),    # Red - High Anomaly
-        QColor(156, 39, 176)    # Purple - Ore Grade
-    ]
+    # If no custom config, use industry standard (backward compatibility)
+    if range_config is None:
+        from ..config.trace_ranges import get_industry_standard_preset
+        range_config = get_industry_standard_preset()
 
-    # Define labels with geological meaning
-    labels = [
-        "Background Low (< Mean)",
-        "Normal (Mean to +1σ)",
-        "Elevated (+1σ to +2σ)",
-        "Anomalous (+2σ to 95%)",
-        "High Anomaly (95-98%)",
-        "Ore Grade (98-99%)"
-    ]
+    # Get colors and names from configuration
+    colors = range_config.get_colors()
+    names = range_config.get_names()
+
+    # Number of ranges should match quantiles - 1
+    num_ranges = len(quantiles) - 1
 
     # Create renderer ranges
     ranges = []
-    for i in range(6):
+    for i in range(num_ranges):
+        # Get color and name for this range
+        color = colors[i] if i < len(colors) else QColor(150, 150, 150)
+        name = names[i] if i < len(names) else f"Range {i + 1}"
+
         symbol = QgsLineSymbol.createSimple({
-            'color': colors[i].name(),
+            'color': color.name(),
             'width': str(line_width),
             'capstyle': 'round'
         })
 
-        # Format label with value range and geological meaning
-        label = f"{labels[i]}: {quantiles[i]:.1f} - {quantiles[i + 1]:.1f}"
+        # Format label with value range and name
+        label = f"{name}: {quantiles[i]:.1f} - {quantiles[i + 1]:.1f}"
 
         range_obj = QgsRendererRange(
             quantiles[i],

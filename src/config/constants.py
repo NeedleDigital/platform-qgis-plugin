@@ -115,6 +115,12 @@ TRACE_LINE_WIDTH = 3.0  # Default trace line width in pixels
 COLLAR_POINT_SIZE = 6.0  # Default collar point size in pixels
 TRACE_ELEMENT_STACK_OFFSET = 0.00005  # Horizontal offset between multiple element trace layers
 
+# Trace Range Configuration
+# Used in: src/ui/components.py (TraceRangeConfigDialog) for validation
+MIN_TRACE_RANGES = 2  # Minimum number of ranges required
+MAX_TRACE_RANGES = 10  # Maximum number of ranges allowed
+DEFAULT_TRACE_RANGE_PRESET = "Industry Standard"  # Default preset to use
+
 # Australian states and territories
 AUSTRALIAN_STATES: List[Tuple[str, str]] = [
     ("New South Wales", "NSW"),

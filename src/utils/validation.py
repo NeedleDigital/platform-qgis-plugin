@@ -187,3 +187,27 @@ def get_user_role_from_token(token: str) -> Optional[str]:
             return role
 
     return None
+
+def format_column_name(column_name: str) -> str:
+    """
+    Format column name from snake_case to Title Case for display.
+
+    Args:
+        column_name: Original column name (e.g., 'hole_id', 'company_name')
+
+    Returns:
+        Formatted column name (e.g., 'Hole Id', 'Company Name')
+
+    Examples:
+        'hole_id' -> 'Hole Id'
+        'assay_element' -> 'Assay Element'
+        'company_name' -> 'Company Name'
+        'max_depth' -> 'Max Depth'
+    """
+    if not column_name:
+        return column_name
+
+    # Replace underscores with spaces and title case each word
+    formatted = column_name.replace('_', ' ').title()
+
+    return formatted

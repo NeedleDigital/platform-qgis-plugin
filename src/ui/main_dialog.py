@@ -60,7 +60,7 @@ class DataImporterDialog(QDialog):
     logout_requested = pyqtSignal()
     data_fetch_requested = pyqtSignal(str, dict, bool)  # tab_name, params, fetch_all
     data_clear_requested = pyqtSignal(str)  # tab_name
-    data_import_requested = pyqtSignal(str, str, object)  # tab_name, layer_name, color
+    data_import_requested = pyqtSignal(str, str, object, object, float, object, object)  # tab_name, layer_name, color, trace_config, point_size, collar_name, trace_name
     page_next_requested = pyqtSignal(str)  # tab_name
     page_previous_requested = pyqtSignal(str)  # tab_name
     cancel_request_requested = pyqtSignal()  # Cancel API request
@@ -889,13 +889,34 @@ class DataImporterDialog(QDialog):
 
     def _handle_import_request(self, tab_name: str):
         """Handle data import request."""
+        # Detect if this is assay data
+        is_assay_data = self._is_assay_data(tab_name)
+
         # Show layer options dialog with dynamic default name
         default_name = self._generate_dynamic_layer_name(tab_name)
-        options_dialog = LayerOptionsDialog(default_name, self)
+        options_dialog = LayerOptionsDialog(default_name, is_assay_data, self)
 
         if options_dialog.exec_() == QDialog.Accepted:
-            layer_name, color = options_dialog.get_options()
-            self.data_import_requested.emit(tab_name, layer_name, color)
+            options = options_dialog.get_options()
+
+            # Unpack options based on whether it's assay data
+            if is_assay_data:
+                group_name, collar_name, trace_name, point_size, color, trace_config = options
+                # For assay data, use group name as the "layer_name" for compatibility
+                layer_name = group_name
+            else:
+                layer_name, point_size, color = options
+                trace_config = None
+
+            # Emit with all parameters (need to update signal to include point_size)
+            self.data_import_requested.emit(tab_name, layer_name, color, trace_config, point_size,
+                                           collar_name if is_assay_data else None,
+                                           trace_name if is_assay_data else None)
+
+    def _is_assay_data(self, tab_name: str) -> bool:
+        """Check if the current tab contains assay data."""
+        # Simple check: Assays tab contains assay data
+        return tab_name == "Assays"
 
     def _handle_view_details(self):
         """Handle View Details button click - show fetch details dialog."""
@@ -1169,7 +1190,7 @@ class DataImporterDialog(QDialog):
     def show_data(self, tab_name: str, data: list, headers: list, pagination_info: dict):
         """Show data in the specified tab with pagination info."""
         tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
-        
+
         # Check if we're currently in loading state
         # If so, don't switch away from loading view unless we have data or this is a successful empty response
         # A successful empty response is indicated by pagination_info having has_data = False AND not being a reset operation
@@ -1178,7 +1199,7 @@ class DataImporterDialog(QDialog):
                                        not pagination_info.get('is_reset_operation', False))
         if self._loading_states[tab_name] and not data and not is_successful_empty_response:
             return
-        
+
         table = tab_widgets['table']
         loading_label = tab_widgets['loading_label']
         no_data_label = tab_widgets['no_data_label']
@@ -1186,7 +1207,7 @@ class DataImporterDialog(QDialog):
         import_button = tab_widgets['import_button']
         pagination_widget = tab_widgets['pagination_widget']
         page_label = tab_widgets['page_label']
-        
+
         if data:
             # Data is already limited to MAX_DISPLAY_RECORDS (1000) from data_manager
             # No need to slice again - just paginate through it
@@ -1195,16 +1216,25 @@ class DataImporterDialog(QDialog):
             start_idx = (current_page - 1) * records_per_page
             end_idx = min(start_idx + records_per_page, len(data))
             page_data = data[start_idx:end_idx]
-            
+
             # Enhanced table display with better UX
             table.setRowCount(len(page_data))
             table.setColumnCount(len(headers))
             table.setHorizontalHeaderLabels(headers)
 
+            # Create mapping from formatted headers back to original column names
+            # Formatted: "Hole Id" -> Original: "hole_id"
+            header_to_original = {
+                header: header.lower().replace(' ', '_')
+                for header in headers
+            }
+
             # Enhanced population with N/A for nulls and tooltips
             for row_idx, record in enumerate(page_data):
                 for col_idx, header in enumerate(headers):
-                    value = record.get(header, '')
+                    # Use original column name to access data
+                    original_key = header_to_original[header]
+                    value = record.get(original_key, '')
 
                     # Handle null/empty values
                     if value is None or value == '' or (isinstance(value, str) and value.strip() == ''):

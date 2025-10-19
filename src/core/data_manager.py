@@ -41,6 +41,7 @@ from ..config.constants import (
 )  # Configuration
 from ..config.settings import config  # Application settings
 from ..utils.logging import log_api_request, log_api_response, log_error, log_info  # Logging utilities
+from ..utils.validation import format_column_name  # Column formatting utility
 
 
 class DataManager(QObject):
@@ -308,10 +309,14 @@ class DataManager(QObject):
             total_fetched = complete_data.get('total_fetched', len(all_data))
             state_contributions = complete_data.get('state_contributions', {})
 
+            # Format column names for display (hole_id -> Hole Id, etc.)
+            formatted_headers = [format_column_name(col) for col in columns]
+
             # Store full data (for QGIS import) and display data (first 1K for fast table pagination)
             self.tab_states[tab_name]['data'] = all_data
             self.tab_states[tab_name]['display_data'] = all_data[:MAX_DISPLAY_RECORDS]  # First 1K only
-            self.tab_states[tab_name]['headers'] = columns
+            self.tab_states[tab_name]['headers'] = formatted_headers
+            self.tab_states[tab_name]['original_headers'] = columns  # Keep original for data access
             self.tab_states[tab_name]['total_records'] = total_fetched
 
             # Calculate fetch time
@@ -343,7 +348,7 @@ class DataManager(QObject):
             # Send display_data to UI (not all_data) for fast rendering
             pagination_info = self._get_pagination_info(tab_name)
             display_data = self.tab_states[tab_name]['display_data']
-            self.data_ready.emit(tab_name, display_data, columns, pagination_info)
+            self.data_ready.emit(tab_name, display_data, formatted_headers, pagination_info)
             self.loading_finished.emit(tab_name)
 
         except Exception as e:
