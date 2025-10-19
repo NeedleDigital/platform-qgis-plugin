@@ -1018,14 +1018,15 @@ class LayerOptionsDialog(QDialog):
         self.update_color_button_stylesheet()
         self.color_button.clicked.connect(self.select_color)
 
-        # Add size label and spinbox
-        point_style_layout.addWidget(QLabel("Size:"))
-        point_style_layout.addWidget(self.point_size_spin)
-        point_style_layout.addSpacing(20)
         # Add color label and button
         point_style_layout.addWidget(QLabel("Color:"))
         point_style_layout.addWidget(self.color_button)
         point_style_layout.addStretch()
+        # Add size label and spinbox
+        point_style_layout.addWidget(QLabel("Size:"))
+        point_style_layout.addWidget(self.point_size_spin)
+        point_style_layout.addSpacing(20)
+        
 
         form_layout.addRow("Point Style:", point_style_layout)
 
@@ -1191,11 +1192,22 @@ class LayerOptionsDialog(QDialog):
             # Get all ranges from widgets
             ranges = [widget.get_trace_range() for widget in self.range_widgets]
 
+            # Validate minimum number of ranges
             if len(ranges) < 2:
                 QMessageBox.warning(
                     self,
                     "Invalid Configuration",
                     "You must define at least 2 ranges."
+                )
+                return
+
+            # Validate range configuration
+            validation_result = self._validate_ranges(ranges)
+            if not validation_result['valid']:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Range Configuration",
+                    validation_result['message']
                 )
                 return
 
@@ -1207,6 +1219,53 @@ class LayerOptionsDialog(QDialog):
             )
 
         self.accept()
+
+    def _validate_ranges(self, ranges):
+        """
+        Validate trace range configuration.
+
+        Checks for:
+        - Empty range names
+        - Duplicate range names
+        - Logical consistency (lower < upper for direct PPM values)
+
+        Args:
+            ranges: List of TraceRange objects
+
+        Returns:
+            Dictionary with 'valid' (bool) and 'message' (str) keys
+        """
+        from ..config.trace_ranges import RangeType
+
+        # Check for empty names
+        for i, r in enumerate(ranges):
+            if not r.name or r.name.strip() == "" or r.name == "Unnamed Range":
+                return {
+                    'valid': False,
+                    'message': f"Range {i + 1} has no name. Please provide a name for all ranges."
+                }
+
+        # Check for duplicate names
+        names = [r.name for r in ranges]
+        if len(names) != len(set(names)):
+            duplicates = [name for name in names if names.count(name) > 1]
+            return {
+                'valid': False,
+                'message': f"Duplicate range names found: {', '.join(set(duplicates))}. Each range must have a unique name."
+            }
+
+        # Check logical consistency for direct PPM ranges
+        for i, r in enumerate(ranges):
+            # If both boundaries are direct PPM values, verify lower < upper
+            if (r.lower_boundary.formula_type == RangeType.DIRECT_PPM and
+                r.upper_boundary.formula_type == RangeType.DIRECT_PPM):
+                if r.lower_boundary.value >= r.upper_boundary.value:
+                    return {
+                        'valid': False,
+                        'message': f"Range '{r.name}': Lower boundary ({r.lower_boundary.value}) must be less than upper boundary ({r.upper_boundary.value})."
+                    }
+
+        return {'valid': True, 'message': ''}
 
     def select_color(self):
         """Open color picker dialog."""

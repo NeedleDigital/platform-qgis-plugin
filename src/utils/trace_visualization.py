@@ -111,7 +111,7 @@ def create_trace_line_geometry(
     # Calculate midpoint depth for offset
     midpoint_depth = (from_depth + to_depth) / 2
 
-    # Calculate horizontal offset (longer lines for better visibility)
+    # Calculate offset magnitude for line length (longer lines for better visibility)
     if max_depth_global and max_depth_global > 0:
         # Proportional offset based on total depth (0.01 degrees ≈ 1.1 km)
         offset = midpoint_depth / max_depth_global * 0.01
@@ -119,9 +119,17 @@ def create_trace_line_geometry(
         # Fixed scale offset (0.01 degrees ≈ 1.1 km at equator)
         offset = midpoint_depth / offset_scale * 0.01
 
-    # Create line from collar extending to the right
+    # Create line from collar at 30° left of vertical
+    # 30° left of vertical means: 60° from horizontal
+    # dx = -offset * sin(30°) = -offset * 0.5 (leftward)
+    # dy = offset * cos(30°) = offset * 0.866 (upward)
+    import math
+    angle_rad = math.radians(30)
+    dx = -offset * math.sin(angle_rad)  # Negative for leftward
+    dy = offset * math.cos(angle_rad)   # Positive for northward (upward)
+
     start_point = QgsPointXY(lon, lat)
-    end_point = QgsPointXY(lon + offset, lat)
+    end_point = QgsPointXY(lon + dx, lat + dy)
 
     return QgsGeometry.fromPolylineXY([start_point, end_point])
 
@@ -340,7 +348,8 @@ def apply_graduated_trace_symbology(
         symbol = QgsLineSymbol.createSimple({
             'color': color.name(),
             'width': str(line_width),
-            'capstyle': 'round'
+            'capstyle': 'flat',
+            'joinstyle': 'miter'
         })
 
         # Format label with value range and name
