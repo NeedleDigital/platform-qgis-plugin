@@ -683,7 +683,8 @@ class QGISLayerManager:
         point_size: float = 3.0,
         collar_layer_name: Optional[str] = None,
         trace_layer_name: Optional[str] = None,
-        group_name: Optional[str] = None
+        group_name: Optional[str] = None,
+        trace_scale: Optional[float] = None
     ) -> Tuple[bool, str]:
         """
         Create drill hole trace visualization layers for assay data.
@@ -715,11 +716,6 @@ class QGISLayerManager:
                 return False, "No data to import"
 
             # DEBUG: Print first record to see structure
-            print(f"\n=== TRACE LAYER DEBUG ===")
-            print(f"Total records: {len(data)}")
-            print(f"First record keys: {list(data[0].keys())}")
-            print(f"First record: {data[0]}")
-            print(f"Value field: {value_field}")
 
             # Report progress: Starting
             if progress_callback:
@@ -727,12 +723,9 @@ class QGISLayerManager:
 
             # Group samples by drill hole (unique lat/lon)
             holes = group_by_collar(data)
-            print(f"Grouped into {len(holes)} collar locations")
 
             # Get maximum depth for proportional scaling (use final_depth field)
             max_depth = get_max_depth_from_data(data)
-            print(f"Max depth: {max_depth}")
-            print("=" * 50)
 
             # Report progress: 10%
             if progress_callback:
@@ -773,9 +766,11 @@ class QGISLayerManager:
             collar_layer.setScaleBasedVisibility(False)
 
             # Trace lines: visible when zoomed in (smaller scale number = zoomed in)
+            # Use custom scale if provided, otherwise use default from constants
+            scale_threshold = trace_scale if trace_scale is not None else TRACE_SCALE_THRESHOLD
             trace_layer.setScaleBasedVisibility(True)
             trace_layer.setMaximumScale(1)  # Show when zoomed in (small scale number)
-            trace_layer.setMinimumScale(TRACE_SCALE_THRESHOLD)  # Hide when zoomed out (large scale number)
+            trace_layer.setMinimumScale(scale_threshold)  # Hide when zoomed out (large scale number)
 
             # Report progress: 85%
             if progress_callback:
@@ -811,8 +806,6 @@ class QGISLayerManager:
 
                 # Get extent and add buffer
                 extent = collar_layer.extent()
-                print(f"Collar layer extent: {extent}")
-                print(f"Extent is empty: {extent.isEmpty()}")
 
                 if not extent.isEmpty():
                     # Add 10% buffer around the data
@@ -829,9 +822,6 @@ class QGISLayerManager:
                     map_canvas = self.iface.mapCanvas()
                     map_canvas.setExtent(extent)
                     map_canvas.refresh()
-                    print(f"Zoomed to extent with buffer: {extent}")
-                else:
-                    print("WARNING: Collar layer extent is empty - cannot zoom")
 
             return True, f"Successfully created trace visualization: {len(holes)} collars, {len(data)} intervals"
 
@@ -930,13 +920,6 @@ class QGISLayerManager:
                 point_geom = QgsGeometry.fromPointXY(QgsPointXY(lon, lat))
                 feature.setGeometry(point_geom)
 
-                # Debug first feature
-                if hole_id == 1:
-                    print(f"First collar point: lat={lat}, lon={lon}")
-                    print(f"Geometry valid: {point_geom.isGeosValid()}")
-                    print(f"Geometry type: {point_geom.type()}")
-                    print(f"WKT: {point_geom.asWkt()}")
-
                 # Calculate stats for this hole using the detected value field
                 values = []
                 if value_field:
@@ -958,46 +941,27 @@ class QGISLayerManager:
                     if field_name in attr_data:
                         feature.setAttribute(field_name, attr_data[field_name])
 
-                # Debug first feature attributes after setting
-                if hole_id == 1:
-                    print(f"First feature attributes after setting: {feature.attributes()}")
-                    print(f"Feature is valid: {feature.isValid()}")
-                    for i, field in enumerate(layer.fields()):
-                        print(f"  Field {i}: {field.name()} = {feature.attribute(field.name())}")
-
                 all_features.append(feature)
                 hole_id += 1
 
             # Validate a few features before adding
-            print(f"Total features to add: {len(all_features)}")
             if all_features:
                 for i in range(min(3, len(all_features))):
                     f = all_features[i]
-                    print(f"Feature {i}: geom_valid={f.geometry().isGeosValid()}, has_geom={f.hasGeometry()}, attr_count={len(f.attributes())}")
 
             # Add all features to provider in batch
             success, added_features = provider.addFeatures(all_features)
-            print(f"Collar add features result: {success}, features added: {len(added_features) if success else 0}")
 
             # Check for errors
             if not success:
                 # Try to get more detailed error info
-                print(f"Provider capabilities: {provider.capabilities()}")
-                print(f"Layer is valid: {layer.isValid()}")
-                print(f"Layer CRS: {layer.crs().authid()}")
-                print(f"Provider supports AddFeatures: {provider.capabilities() & QgsVectorDataProvider.AddFeatures}")
 
                 # Try adding just the first feature to see if there's a specific error
-                print(f"\nTrying to add first feature alone...")
                 test_success, test_added = provider.addFeatures([all_features[0]])
-                print(f"Single feature add result: {test_success}")
 
             # Force extent recalculation
             layer.updateExtents()
 
-            print(f"Collar layer feature count: {layer.featureCount()}")
-            print(f"Collar layer extent after adding: {layer.extent()}")
-            print(f"Collar layer extent isEmpty: {layer.extent().isEmpty()}")
 
             # Apply styling with custom point size
             self._apply_layer_styling(layer, color, point_size)
@@ -1095,11 +1059,9 @@ class QGISLayerManager:
 
             # Add all features to provider (correct pattern for memory layers)
             success, added_features = provider.addFeatures(all_features)
-            print(f"Trace lines add features result: {success}, features added: {len(added_features) if success else 0}")
 
             layer.updateExtents()
 
-            print(f"Trace layer feature count: {layer.featureCount()}")
 
             # Add to project
             QgsProject.instance().addMapLayer(layer, False)  # Don't add to legend yet

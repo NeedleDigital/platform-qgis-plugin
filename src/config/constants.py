@@ -119,7 +119,7 @@ TRACE_ELEMENT_STACK_OFFSET = 0.00005  # Horizontal offset between multiple eleme
 # Used in: src/ui/components.py (TraceRangeConfigDialog) for validation
 MIN_TRACE_RANGES = 2  # Minimum number of ranges required
 MAX_TRACE_RANGES = 10  # Maximum number of ranges allowed
-DEFAULT_TRACE_RANGE_PRESET = "Industry Standard"  # Default preset to use
+DEFAULT_TRACE_RANGE_PRESET = "Default"  # Default preset to use
 
 # Australian states and territories
 AUSTRALIAN_STATES: List[Tuple[str, str]] = [

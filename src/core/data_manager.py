@@ -228,10 +228,7 @@ class DataManager(QObject):
         # Select appropriate endpoint
         endpoint = API_ENDPOINTS['holes_data'] if tab_name == 'Holes' else API_ENDPOINTS['assays_data']
 
-        # Log request parameters for debugging
-        print(f"\n=== Starting Streaming Request ===")
-        print(f"Endpoint: {endpoint}")
-        print(f"Parameters: {base_params}")
+        # Log request parameters
         log_info(f"Starting streaming fetch for {tab_name}: {requested_count:,} records")
         log_info(f"Request params: {base_params}")
 
@@ -353,10 +350,7 @@ class DataManager(QObject):
 
         except Exception as e:
             error_msg = f"Failed to finalize streaming: {e}"
-            print(f"\n=== ERROR IN COMPLETE HANDLER ===")
-            print(f"Error: {e}")
             import traceback
-            traceback.print_exc()
             log_error(error_msg)
             log_error(traceback.format_exc())
 
@@ -380,8 +374,6 @@ class DataManager(QObject):
         Do NOT close the stream or cleanup state here.
         """
         try:
-            print(f"\n=== STREAMING ERROR EVENT (non-fatal) ===")
-            print(f"Error data: {error_data}")
             log_error(f"SSE error event received (stream continues): {error_data}")
 
             # Silently ignore if no active streaming state
@@ -399,18 +391,14 @@ class DataManager(QObject):
             else:
                 error_msg = str(error_data)
 
-            print(f"Error message: {error_msg}")
-            print(f"Stream continues... waiting for more events")
-
             # Just log the error - DO NOT close stream or cleanup state
             # The stream will continue and we'll get more data/progress/complete events
             log_error(f"Non-fatal stream error: {error_msg}")
 
         except Exception as e:
-            print(f"CRITICAL ERROR in _handle_streaming_error: {e}")
             import traceback
-            traceback.print_exc()
             log_error(f"Critical error in error handler: {e}")
+            log_error(traceback.format_exc())
     
     def get_tab_data(self, tab_name: str) -> tuple:
         """Get data and headers for a tab."""

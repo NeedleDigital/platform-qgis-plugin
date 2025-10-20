@@ -7,7 +7,7 @@ with different boundary formula types and color schemes.
 
 Key Features:
     - Multiple boundary formula types (direct PPM, mean multipliers, std dev, percentiles)
-    - Predefined presets (Industry Standard, Conservative, Aggressive)
+    - Predefined presets (Default, Conservative, Aggressive)
     - Custom range configuration support
     - Validation for range boundaries
 
@@ -173,7 +173,7 @@ class TraceRangeConfiguration:
 
 def get_industry_standard_preset() -> TraceRangeConfiguration:
     """
-    Industry Standard preset - current default implementation.
+    Default preset - current default implementation.
 
     6 ranges based on mean ± σ and high percentiles:
     - Background Low: min → mean
@@ -222,7 +222,7 @@ def get_industry_standard_preset() -> TraceRangeConfiguration:
         )
     ]
 
-    return TraceRangeConfiguration(ranges, "Industry Standard")
+    return TraceRangeConfiguration(ranges, "Default")
 
 
 def get_conservative_preset() -> TraceRangeConfiguration:
@@ -338,13 +338,13 @@ def get_preset_by_name(name: str) -> TraceRangeConfiguration:
     Get preset configuration by name.
 
     Args:
-        name: Preset name ("Industry Standard", "Conservative", "Aggressive")
+        name: Preset name ("Default", "Conservative", "Aggressive")
 
     Returns:
         TraceRangeConfiguration for the preset
     """
     presets = {
-        "Industry Standard": get_industry_standard_preset,
+        "Default": get_industry_standard_preset,
         "Conservative": get_conservative_preset,
         "Aggressive": get_aggressive_preset
     }
@@ -352,10 +352,10 @@ def get_preset_by_name(name: str) -> TraceRangeConfiguration:
     if name in presets:
         return presets[name]()
     else:
-        # Default to Industry Standard
+        # Default to Default
         return get_industry_standard_preset()
 
 
 def get_available_presets() -> List[str]:
     """Get list of available preset names."""
-    return ["Industry Standard", "Conservative", "Aggressive"]
+    return ["Default", "Conservative", "Aggressive"]

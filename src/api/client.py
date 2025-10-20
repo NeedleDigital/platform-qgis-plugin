@@ -93,12 +93,13 @@ class ApiClient(QObject):
         self.refresh_token: Optional[str] = None
         self.token_expires_at: float = 0
         self.user_role: Optional[str] = None  # User role from token (tier_1, tier_2, admin)
+        self.last_login_email: str = ""  # Store last successful login email for autofill
         self._initialization_complete = False
         self._active_replies = []  # Track active network requests for cancellation
         self._streaming_buffers = {}  # Track SSE parsing buffers by reply
         self._streaming_decompressors = {}  # Track gzip decompressor objects by reply
         self._streaming_text_buffers = {}  # Track text buffers for incomplete SSE events
-        
+
         # Token refresh timer
         self.token_refresh_timer = QTimer()
         self.token_refresh_timer.timeout.connect(lambda: self.refresh_auth_token(silent=True))
@@ -123,12 +124,25 @@ class ApiClient(QObject):
         """Complete initialization and attempt silent token refresh if needed."""
         if self._initialization_complete:
             return
-            
+
         self._initialization_complete = True
-        
-        # Now it's safe to attempt token refresh
+
+        # Check if we have a refresh token
         if self.refresh_token:
-            self.refresh_auth_token(silent=True)
+            # Check if access token is expired or will expire soon
+            time_until_expiry = self.token_expires_at - time.time()
+
+            if time_until_expiry < 60:  # Expired or expiring in <1 minute
+                log_info(f"Token expired/expiring soon, attempting silent refresh...")
+                self.refresh_auth_token(silent=True)
+            else:
+                log_info(f"Token still valid for {time_until_expiry/60:.1f} minutes")
+                # Schedule next refresh at 50% of remaining lifetime
+                refresh_delay_ms = max(0, int((time_until_expiry / 2) * 1000))
+                self.token_refresh_timer.start(refresh_delay_ms)
+                log_info(f"Next token refresh scheduled in {refresh_delay_ms/1000:.0f} seconds")
+        else:
+            log_warning("No refresh token found - user must login")
     
     def is_authenticated(self) -> bool:
         """Check if user is currently authenticated."""
@@ -138,19 +152,38 @@ class ApiClient(QObject):
         """Get the current user's role."""
         return self.user_role
 
+    def get_last_login_email(self) -> str:
+        """Get the last successfully logged in email for autofill."""
+        settings = QgsSettings()
+        return settings.value("needle/lastLoginEmail", "")
+
+    def ensure_token_valid(self) -> bool:
+        """Ensure token is valid, refresh if needed. Returns True if valid/refreshed."""
+        # Check if token will expire in next 5 minutes
+        time_until_expiry = self.token_expires_at - time.time()
+
+        if time_until_expiry < 300:  # Less than 5 minutes remaining
+            log_info(f"Token expiring soon ({time_until_expiry:.0f}s), triggering proactive refresh...")
+            self.refresh_auth_token(silent=True)
+            return True
+
+        return self.is_authenticated()
+
     def login(self, email: str, password: str) -> None:
         """Authenticate user with email and password."""
         if not email or not password or not re.match(r"[^@]+@[^@]+\.[^@]+", email):
             self.login_failed.emit("A valid email and password are required.")
             return
-        
-        
+
+        # Store email for autofill on successful login
+        self.last_login_email = email
+
         payload = {
             "email": email,
             "password": password,
             "returnSecureToken": True
         }
-        
+
         self._make_request(
             url=config.firebase_auth_url,
             method="POST",
@@ -165,13 +198,15 @@ class ApiClient(QObject):
         self.refresh_token = None
         self.token_expires_at = 0
         self.user_role = None
+        self.last_login_email = ""
         self.token_refresh_timer.stop()
 
-        # Clear all stored tokens and expiration time
+        # Clear all stored tokens, expiration time, and email
         settings = QgsSettings()
         settings.remove("needle/refreshToken")
         settings.remove("needle/authToken")
         settings.remove("needle/tokenExpiresAt")
+        settings.remove("needle/lastLoginEmail")
 
         # Cancel any ongoing requests
         self.cancel_all_requests()
@@ -262,12 +297,6 @@ class ApiClient(QObject):
             if query_parts:
                 query_string = "&".join(query_parts)
                 request_url = QUrl(f"{url}?{query_string}")
-
-        # Log the complete API request URL to console
-        print(f"\n=== API REQUEST ===")
-        print(f"URL: {request_url.toString()}")
-        print(f"Method: GET")
-        print("==================\n")
 
         request = QNetworkRequest(request_url)
 
@@ -561,15 +590,17 @@ class ApiClient(QObject):
             expires_in = int(response_data.get("expiresIn", 3600))
             self.token_expires_at = time.time() + expires_in
 
-            # Save tokens and expiration time
+            # Save tokens, expiration time, and email
             settings = QgsSettings()
             settings.setValue("needle/refreshToken", self.refresh_token)
             settings.setValue("needle/authToken", self.auth_token)
             settings.setValue("needle/tokenExpiresAt", str(self.token_expires_at))
+            settings.setValue("needle/lastLoginEmail", self.last_login_email)
 
-            # Setup token refresh timer
-            refresh_delay_ms = max(0, (expires_in - 60) * 1000)  # Refresh 1 minute before expiry
+            # Setup token refresh timer - refresh at 50% of token lifetime for better persistence
+            refresh_delay_ms = max(0, (expires_in // 2) * 1000)  # Refresh at halfway point (e.g., 30 min for 1hr token)
             self.token_refresh_timer.start(refresh_delay_ms)
+            log_info(f"Token refresh scheduled in {refresh_delay_ms/1000:.0f} seconds ({refresh_delay_ms/60000:.1f} minutes)")
 
             self.login_success.emit()
 
@@ -592,15 +623,18 @@ class ApiClient(QObject):
                 expires_in = int(response_data.get("expires_in", 3600))
                 self.token_expires_at = time.time() + expires_in
 
+                log_info(f"Token refreshed successfully. New expiry: {expires_in}s from now")
+
                 # Save updated tokens and expiration time
                 settings = QgsSettings()
                 settings.setValue("needle/refreshToken", self.refresh_token)
                 settings.setValue("needle/authToken", self.auth_token)
                 settings.setValue("needle/tokenExpiresAt", str(self.token_expires_at))
 
-                # Schedule next refresh
-                refresh_delay_ms = max(0, (expires_in - 60) * 1000)
+                # Schedule next refresh at 50% of lifetime for better persistence
+                refresh_delay_ms = max(0, (expires_in // 2) * 1000)
                 self.token_refresh_timer.start(refresh_delay_ms)
+                log_info(f"Next token refresh scheduled in {refresh_delay_ms/1000:.0f} seconds")
 
 
                 # Emit login_success signal to update UI

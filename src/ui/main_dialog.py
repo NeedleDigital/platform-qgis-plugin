@@ -60,7 +60,7 @@ class DataImporterDialog(QDialog):
     logout_requested = pyqtSignal()
     data_fetch_requested = pyqtSignal(str, dict, bool)  # tab_name, params, fetch_all
     data_clear_requested = pyqtSignal(str)  # tab_name
-    data_import_requested = pyqtSignal(str, str, object, object, float, object, object)  # tab_name, layer_name, color, trace_config, point_size, collar_name, trace_name
+    data_import_requested = pyqtSignal(str, str, object, object, float, object, object, object)  # tab_name, layer_name, color, trace_config, point_size, collar_name, trace_name, trace_scale
     page_next_requested = pyqtSignal(str)  # tab_name
     page_previous_requested = pyqtSignal(str)  # tab_name
     cancel_request_requested = pyqtSignal()  # Cancel API request
@@ -901,17 +901,19 @@ class DataImporterDialog(QDialog):
 
             # Unpack options based on whether it's assay data
             if is_assay_data:
-                group_name, collar_name, trace_name, point_size, color, trace_config = options
+                group_name, collar_name, trace_name, point_size, color, trace_config, trace_scale = options
                 # For assay data, use group name as the "layer_name" for compatibility
                 layer_name = group_name
             else:
                 layer_name, point_size, color = options
                 trace_config = None
+                trace_scale = None
 
             # Emit with all parameters (need to update signal to include point_size)
             self.data_import_requested.emit(tab_name, layer_name, color, trace_config, point_size,
                                            collar_name if is_assay_data else None,
-                                           trace_name if is_assay_data else None)
+                                           trace_name if is_assay_data else None,
+                                           trace_scale if is_assay_data else None)
 
     def _is_assay_data(self, tab_name: str) -> bool:
         """Check if the current tab contains assay data."""

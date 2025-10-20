@@ -240,7 +240,7 @@ def calculate_trace_breakpoints(
     Args:
         data: List of records
         value_field: Field name containing numeric values
-        range_config: TraceRangeConfiguration object (optional, uses industry standard if None)
+        range_config: TraceRangeConfiguration object (optional, uses default if None)
 
     Returns:
         List of breakpoint values matching the range configuration
@@ -248,7 +248,7 @@ def calculate_trace_breakpoints(
     # Calculate data statistics
     stats = calculate_data_statistics(data, value_field)
 
-    # If no custom config, use industry standard (backward compatibility)
+    # If no custom config, use default (backward compatibility)
     if range_config is None:
         from ..config.trace_ranges import get_industry_standard_preset
         range_config = get_industry_standard_preset()
@@ -303,7 +303,7 @@ def calculate_value_quantiles(data: List[Dict[str, Any]], value_field: str) -> L
         - High Anomaly: 95th → 98th percentile
         - Ore Grade: 98th → 99th percentile
     """
-    # Use new function with industry standard preset
+    # Use new function with default preset
     return calculate_trace_breakpoints(data, value_field, None)
 
 
@@ -324,9 +324,9 @@ def apply_graduated_trace_symbology(
         value_field: Field name for graduation
         quantiles: Statistical breakpoints calculated from data
         line_width: Width of trace lines in pixels
-        range_config: TraceRangeConfiguration object (optional, uses industry standard if None)
+        range_config: TraceRangeConfiguration object (optional, uses Default if None)
     """
-    # If no custom config, use industry standard (backward compatibility)
+    # If no custom config, use Default (backward compatibility)
     if range_config is None:
         from ..config.trace_ranges import get_industry_standard_preset
         range_config = get_industry_standard_preset()

@@ -264,7 +264,7 @@ class DataImporter:
         """Handle login request from dialog."""
         try:
             if not self.login_dlg:
-                self.login_dlg = LoginDialog(self.dlg)
+                self.login_dlg = LoginDialog(self.dlg, self.data_manager.api_client)
                 self.login_dlg.login_attempt.connect(self._handle_login_attempt)
             
             # Show login dialog
@@ -382,7 +382,7 @@ class DataImporter:
 
             # Show login dialog directly without error message
             if not self.login_dlg:
-                self.login_dlg = LoginDialog(self.dlg)
+                self.login_dlg = LoginDialog(self.dlg, self.data_manager.api_client)
                 self.login_dlg.login_attempt.connect(self._handle_login_attempt)
 
             self.login_dlg.exec_()
@@ -412,7 +412,7 @@ class DataImporter:
             log_error(error_msg)
             self.dlg.show_error(error_msg)
 
-    def _handle_data_import_request(self, tab_name, layer_name, color, trace_config=None, point_size=3.0, collar_name=None, trace_name=None):
+    def _handle_data_import_request(self, tab_name, layer_name, color, trace_config=None, point_size=3.0, collar_name=None, trace_name=None, trace_scale=None):
         """Handle data import request with intelligent large dataset optimization.
 
         This method manages the complete data import workflow including:
@@ -496,7 +496,7 @@ class DataImporter:
                     try:
                         success, message = self.layer_manager.create_assay_trace_layer(
                             layer_name, data, color, element, "assay_value", progress_callback, trace_config,
-                            point_size, collar_name, trace_name, layer_name
+                            point_size, collar_name, trace_name, layer_name, trace_scale
                         )
                         progress_dialog.finish_import(success, record_count if success else 0, message)
                         self._handle_import_result(success, message, warning_dialog_shown)
@@ -511,7 +511,7 @@ class DataImporter:
                     # Small dataset - no progress dialog
                     success, message = self.layer_manager.create_assay_trace_layer(
                         layer_name, data, color, element, "assay_value", None, trace_config,
-                        point_size, collar_name, trace_name, layer_name
+                        point_size, collar_name, trace_name, layer_name, trace_scale
                     )
                     self._handle_import_result(success, message, warning_dialog_shown)
             # For non-assay data, use point layers with optional chunking

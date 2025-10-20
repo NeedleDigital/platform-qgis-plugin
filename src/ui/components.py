@@ -19,7 +19,7 @@ from qgis.core import (
 
 from ..utils.logging import log_info, log_error, log_warning, log_debug
 from ..config.constants import (
-    MAX_SAFE_IMPORT, OSM_LAYER_NAME, OSM_LAYER_URL, PARTIAL_IMPORT_LIMIT
+    MAX_SAFE_IMPORT, OSM_LAYER_NAME, OSM_LAYER_URL, PARTIAL_IMPORT_LIMIT, TRACE_SCALE_THRESHOLD
 )
 
 
@@ -876,19 +876,26 @@ class StaticFilterWidget(QWidget):
 
 class LoginDialog(QDialog):
     """Dialog for user authentication."""
-    
+
     login_attempt = pyqtSignal(str, str)
-    
-    def __init__(self, parent=None):
+
+    def __init__(self, parent=None, api_client=None):
         super(LoginDialog, self).__init__(parent)
         self.setWindowTitle("Login - Needle Digital")
         self.setMinimumWidth(350)
         self.setModal(True)
-        
+        self.api_client = api_client
+
         # Email input
         self.email_input = QLineEdit()
         self.email_input.setPlaceholderText("Enter your email address")
-        
+
+        # Auto-fill email if available
+        if self.api_client:
+            last_email = self.api_client.get_last_login_email()
+            if last_email:
+                self.email_input.setText(last_email)
+
         # Password input
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
@@ -924,7 +931,13 @@ class LoginDialog(QDialog):
         
         # Connect Enter key to login
         self.password_input.returnPressed.connect(self.handle_login_attempt)
-    
+
+        # Set focus: password if email is pre-filled, otherwise email
+        if self.email_input.text():
+            self.password_input.setFocus()
+        else:
+            self.email_input.setFocus()
+
     def handle_login_attempt(self):
         """Handle login button click."""
         self.error_label.setVisible(False)
@@ -999,36 +1012,45 @@ class LayerOptionsDialog(QDialog):
             self.layer_name_input = QLineEdit(default_name)
             form_layout.addRow("Layer Name:", self.layer_name_input)
 
-        # Point size and color in same row
+        # Create a horizontal layout for styling controls
         point_style_layout = QHBoxLayout()
 
-        # Point size input
-        self.point_size_spin = QDoubleSpinBox()
-        self.point_size_spin.setRange(1.0, 20.0)
-        self.point_size_spin.setDecimals(1)
-        self.point_size_spin.setValue(3.0)  # Default point size
-        self.point_size_spin.setSuffix(" px")
-        self.point_size_spin.setFocusPolicy(Qt.StrongFocus)  # Prevent wheel scrolling when not focused
-
-        # Color selection
-        self.color_button = QPushButton("Select Point Color")
-        self.color_button.setDefault(False)
+        # --- Point Color Widgets (Button with label) ---
+        # Add color label
+        point_style_layout.addWidget(QLabel("Pick Color:"))
+        # Color selection button (Already defined with its style)
+        self.color_button = QPushButton()
+        self.color_button.setMaximumSize(40, 25) 
         self.color_button.setAutoDefault(False)
-        self.selected_color = QColor(255, 0, 0)  # Default red
-        self.update_color_button_stylesheet()
+        # ... connect and style button (ensure the rounded style is applied)
+        self.selected_color = QColor(255, 0, 0)
+        self.update_color_button_stylesheet() # Make sure this applies the rounded style
         self.color_button.clicked.connect(self.select_color)
 
-        # Add color label and button
-        point_style_layout.addWidget(QLabel("Color:"))
         point_style_layout.addWidget(self.color_button)
-        point_style_layout.addStretch()
-        # Add size label and spinbox
-        point_style_layout.addWidget(QLabel("Size:"))
-        point_style_layout.addWidget(self.point_size_spin)
-        point_style_layout.addSpacing(20)
-        
 
-        form_layout.addRow("Point Style:", point_style_layout)
+        # --- Spacing (12 pixels) ---
+        point_style_layout.addSpacing(12)
+
+        # --- Point Size Widgets (SpinBox with label) ---
+        # Add size label
+        point_style_layout.addWidget(QLabel("Point Size:"))
+        # Point size input (Already defined)
+        self.point_size_spin = NoScrollDoubleSpinBox()
+        self.point_size_spin.setRange(1.0, 20.0)
+        self.point_size_spin.setDecimals(1)
+        self.point_size_spin.setValue(3.0)
+        self.point_size_spin.setSuffix(" px")
+        self.point_size_spin.setFocusPolicy(Qt.StrongFocus) 
+
+        point_style_layout.addWidget(self.point_size_spin)
+
+        # --- Add Stretch to Push Elements to the Left ---
+        # This line is crucial: it pushes the combined widgets to the left and fills the rest of the row.
+        point_style_layout.addStretch()
+
+        # Add the final layout to your form
+        form_layout.addRow("Point Styling:", point_style_layout)
 
         layout.addLayout(form_layout)
 
@@ -1056,13 +1078,33 @@ class LayerOptionsDialog(QDialog):
             for preset_name in get_available_presets():
                 self.trace_preset_combo.addItem(preset_name)
             self.trace_preset_combo.addItem("Custom")  # Add Custom option
-            self.trace_preset_combo.setCurrentText("Industry Standard")
+            self.trace_preset_combo.setCurrentText("Default")
             self.trace_preset_combo.currentTextChanged.connect(self._on_preset_changed)
             self.trace_preset_combo.setFocusPolicy(Qt.ClickFocus)  # Prevent wheel scrolling when not focused
             preset_layout.addWidget(self.trace_preset_combo, stretch=1)
             preset_layout.addStretch()
 
             layout.addLayout(preset_layout)
+
+            # Trace scale visibility configuration
+            scale_layout = QHBoxLayout()
+            scale_label = QLabel("Trace Visibility Scale:")
+            scale_label.setToolTip("Map scale at which trace lines become visible.\nLower values = need to zoom in more to see traces.\nDefault: 1:50,000")
+            scale_layout.addWidget(scale_label)
+
+            self.trace_scale_spin = QDoubleSpinBox()
+            self.trace_scale_spin.setRange(1000, 500000)  # Reasonable range for map scales
+            self.trace_scale_spin.setDecimals(0)
+            self.trace_scale_spin.setValue(TRACE_SCALE_THRESHOLD)  # Default from constants
+            self.trace_scale_spin.setSuffix("")
+            self.trace_scale_spin.setPrefix("1:")
+            self.trace_scale_spin.setSingleStep(10000)
+            self.trace_scale_spin.setToolTip("Traces visible when zoomed in closer than this scale.\nExample: 1:50,000 means traces show at scales like 1:25,000, 1:10,000, etc.")
+            self.trace_scale_spin.setFocusPolicy(Qt.StrongFocus)
+            scale_layout.addWidget(self.trace_scale_spin)
+            scale_layout.addStretch()
+
+            layout.addLayout(scale_layout)
 
             # Scroll area for range widgets
             scroll_area = QScrollArea()
@@ -1176,15 +1218,29 @@ class LayerOptionsDialog(QDialog):
 
     def _on_preset_changed(self, preset_name):
         """Handle preset selection change."""
-        from ..config.trace_ranges import get_preset_by_name
+        from ..config.trace_ranges import get_preset_by_name, get_industry_standard_preset, TraceRange
 
-        if preset_name != "Custom":
+        if preset_name == "Custom":
+            # Load Default as template with generic "Range N" names
+            industry_config = get_industry_standard_preset()
+            custom_ranges = []
+            for idx, preset_range in enumerate(industry_config.ranges, start=1):
+                custom_range = TraceRange(
+                    name=f"Range {idx}",
+                    color=preset_range.color,
+                    lower_boundary=preset_range.lower_boundary,
+                    upper_boundary=preset_range.upper_boundary
+                )
+                custom_ranges.append(custom_range)
+
+            # Update config with custom ranges
+            from ..config.trace_ranges import TraceRangeConfiguration
+            self.trace_range_config = TraceRangeConfiguration(custom_ranges, "Custom")
+            self._populate_ranges()
+        else:
             # Load preset configuration
             self.trace_range_config = get_preset_by_name(preset_name)
             self._populate_ranges()
-        else:
-            # Enable editing for custom
-            self._set_ranges_editable(True)
 
     def _on_accept(self):
         """Validate and accept the configuration."""
@@ -1282,6 +1338,10 @@ class LayerOptionsDialog(QDialog):
                 border: 2px solid #333;
                 padding: 8px;
                 font-weight: bold;
+                border-radius: 10px; 
+            }}
+            QPushButton:hover {{
+                cursor:pointer
             }}
         """)
 
@@ -1289,7 +1349,7 @@ class LayerOptionsDialog(QDialog):
         """Get the configured options.
 
         Returns:
-            For assay data: (group_name, collar_layer_name, trace_layer_name, point_size, color, trace_config)
+            For assay data: (group_name, collar_layer_name, trace_layer_name, point_size, color, trace_config, trace_scale)
             For holes: (layer_name, point_size, color)
         """
         if self.is_assay_data:
@@ -1299,7 +1359,8 @@ class LayerOptionsDialog(QDialog):
                 self.trace_layer_name_input.text(),
                 self.point_size_spin.value(),
                 self.selected_color,
-                self.trace_range_config
+                self.trace_range_config,
+                self.trace_scale_spin.value()
             )
         else:
             return (
@@ -1836,11 +1897,6 @@ class PolygonSelectionDialog(QDialog):
             log_info("OpenStreetMap basemap loaded successfully")
         else:
             log_warning("Failed to load OpenStreetMap basemap - using blank canvas")
-            
-        print("Layer CRS:", basemap_layer.crs().authid())
-        print("Canvas CRS:", self.map_canvas.mapSettings().destinationCrs().authid())
-        print("Layer Extent:", basemap_layer.extent().toString())
-        print("Canvas Extent:", self.map_canvas.extent().toString())
 
         # ✅ FIX 3: Reset extent to valid area (Australia)
         transform = QgsCoordinateTransform(
@@ -2058,7 +2114,7 @@ class TraceRangeWidget(QWidget):
         top_row.addWidget(self.name_input, stretch=3)
 
         self.color_button = QPushButton("Color")
-        self.color_button.setFixedWidth(80)
+        self.color_button.setFixedWidth(60)
         self.color_button.setDefault(False)
         self.color_button.setAutoDefault(False)
         self.selected_color = QColor(100, 181, 246)  # Default blue
@@ -2067,7 +2123,7 @@ class TraceRangeWidget(QWidget):
         top_row.addWidget(self.color_button)
 
         self.remove_button = QPushButton("×")
-        self.remove_button.setFixedSize(24, 24)
+        self.remove_button.setFixedSize(20, 20)
         self.remove_button.setDefault(False)
         self.remove_button.setAutoDefault(False)
         self.remove_button.setToolTip("Remove this range")
@@ -2075,7 +2131,7 @@ class TraceRangeWidget(QWidget):
             QPushButton {
                 font-weight: bold;
                 font-size: 16px;
-                border-radius: 12px;
+                border-radius: 10px;
                 border: 1px solid #ccc;
                 background-color: #f0f0f0;
             }
@@ -2095,14 +2151,14 @@ class TraceRangeWidget(QWidget):
         lower_label.setFixedWidth(50)
         lower_row.addWidget(lower_label)
 
-        self.lower_type_combo = QComboBox()
+        self.lower_type_combo = NoScrollComboBox()
         for range_type in RangeType:
             self.lower_type_combo.addItem(range_type.value, range_type)
         self.lower_type_combo.currentIndexChanged.connect(self.changed.emit)
         self.lower_type_combo.setFocusPolicy(Qt.ClickFocus)  # Prevent wheel scrolling when not focused
         lower_row.addWidget(self.lower_type_combo, stretch=2)
 
-        self.lower_value_spin = QDoubleSpinBox()
+        self.lower_value_spin = NoScrollDoubleSpinBox()
         self.lower_value_spin.setRange(-1000000.0, 1000000.0)
         self.lower_value_spin.setDecimals(2)
         self.lower_value_spin.setValue(0.0)
@@ -2118,14 +2174,14 @@ class TraceRangeWidget(QWidget):
         upper_label.setFixedWidth(50)
         upper_row.addWidget(upper_label)
 
-        self.upper_type_combo = QComboBox()
+        self.upper_type_combo = NoScrollComboBox()
         for range_type in RangeType:
             self.upper_type_combo.addItem(range_type.value, range_type)
         self.upper_type_combo.currentIndexChanged.connect(self.changed.emit)
         self.upper_type_combo.setFocusPolicy(Qt.ClickFocus)  # Prevent wheel scrolling when not focused
         upper_row.addWidget(self.upper_type_combo, stretch=2)
 
-        self.upper_value_spin = QDoubleSpinBox()
+        self.upper_value_spin = NoScrollDoubleSpinBox()
         self.upper_value_spin.setRange(-1000000.0, 1000000.0)
         self.upper_value_spin.setDecimals(2)
         self.upper_value_spin.setValue(1.0)
@@ -2195,189 +2251,45 @@ class TraceRangeWidget(QWidget):
         return TraceRange(name, self.selected_color, lower_boundary, upper_boundary)
 
 
-class TraceRangeConfigDialog(QDialog):
-    """Dialog for configuring trace ranges for assay visualization."""
-
-    def __init__(self, initial_config=None, parent=None):
-        """
-        Initialize trace range configuration dialog.
-
-        Args:
-            initial_config: TraceRangeConfiguration to start with (optional)
-            parent: Parent widget
-        """
+class NoScrollDoubleSpinBox(QDoubleSpinBox):
+    """
+    A custom QDoubleSpinBox that ignores the mouse wheel event
+    unless the widget is currently focused (i.e., clicked on or tabbed into).
+    This prevents accidental value changes when scrolling the dialog.
+    """
+    def __init__(self, parent=None):
         super().__init__(parent)
-        from ..config.trace_ranges import get_industry_standard_preset, get_available_presets
+        # Setting focus policy to StrongFocus is a good practice, but not always enough
+        self.setFocusPolicy(Qt.StrongFocus) 
 
-        self.trace_config = initial_config or get_industry_standard_preset()
-        self.range_widgets = []
+    def wheelEvent(self, event):
+        # Check if the widget has focus.
+        if self.hasFocus():
+            # If focused, process the wheel event (change the value).
+            super().wheelEvent(event)
+        else:
+            # If not focused (user is likely scrolling the parent dialog), 
+            # ignore the event so it propagates up to the parent widget.
+            event.ignore()
 
-        self._setup_ui()
-        self._populate_ranges()
+class NoScrollComboBox(QComboBox):
+    """
+    A custom QComboBox that ignores the mouse wheel event
+    unless the dropdown list is currently visible (open).
+    This prevents accidental selection changes when scrolling the dialog.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Set focus policy to prevent gaining focus on wheel, 
+        # though the wheelEvent override is the main fix.
+        self.setFocusPolicy(Qt.StrongFocus) 
 
-    def _setup_ui(self):
-        """Setup the dialog UI."""
-        from ..config.trace_ranges import get_available_presets
-
-        self.setWindowTitle("Configure Trace Ranges")
-        self.setMinimumSize(600, 500)
-
-        layout = QVBoxLayout(self)
-
-        # Header
-        header_label = QLabel("Trace Range Configuration")
-        header_font = QFont()
-        header_font.setBold(True)
-        header_font.setPointSize(12)
-        header_label.setFont(header_font)
-        layout.addWidget(header_label)
-
-        # Preset selector
-        preset_layout = QHBoxLayout()
-        preset_label = QLabel("Load Preset:")
-        preset_layout.addWidget(preset_label)
-
-        self.preset_combo = QComboBox()
-        for preset_name in get_available_presets():
-            self.preset_combo.addItem(preset_name)
-        self.preset_combo.addItem("Custom")
-        # Set current preset
-        preset_idx = self.preset_combo.findText(self.trace_config.preset_name)
-        if preset_idx >= 0:
-            self.preset_combo.setCurrentIndex(preset_idx)
-        self.preset_combo.currentTextChanged.connect(self._on_preset_changed)
-        preset_layout.addWidget(self.preset_combo, stretch=1)
-
-        preset_layout.addStretch()
-        layout.addLayout(preset_layout)
-
-        # Separator
-        separator1 = QFrame()
-        separator1.setFrameShape(QFrame.HLine)
-        separator1.setFrameShadow(QFrame.Sunken)
-        layout.addWidget(separator1)
-
-        # Scroll area for ranges
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
-        self.ranges_container = QWidget()
-        self.ranges_layout = QVBoxLayout(self.ranges_container)
-        self.ranges_layout.setContentsMargins(0, 0, 0, 0)
-        self.ranges_layout.setSpacing(0)
-
-        scroll_area.setWidget(self.ranges_container)
-        layout.addWidget(scroll_area, stretch=1)
-
-        # Add range button
-        add_button_layout = QHBoxLayout()
-        self.add_range_button = QPushButton("+ Add Range")
-        self.add_range_button.clicked.connect(self._add_range)
-        add_button_layout.addWidget(self.add_range_button)
-        add_button_layout.addStretch()
-        layout.addLayout(add_button_layout)
-
-        # Dialog buttons
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(self._on_accept)
-        button_box.rejected.connect(self.reject)
-        layout.addWidget(button_box)
-
-    def _populate_ranges(self):
-        """Populate range widgets from current configuration."""
-        # Clear existing widgets
-        for widget in self.range_widgets:
-            widget.deleteLater()
-        self.range_widgets.clear()
-
-        # Add widget for each range
-        for trace_range in self.trace_config.ranges:
-            self._add_range_widget(trace_range)
-
-        # Add stretch at the end
-        self.ranges_layout.addStretch()
-
-    def _add_range(self):
-        """Add a new empty range."""
-        from ..config.trace_ranges import TraceRange, BoundaryFormula, RangeType
-        from qgis.PyQt.QtGui import QColor
-
-        # Create a default range
-        new_range = TraceRange(
-            "New Range",
-            QColor(150, 150, 150),
-            BoundaryFormula(RangeType.DIRECT_PPM, 0.0),
-            BoundaryFormula(RangeType.DIRECT_PPM, 100.0)
-        )
-        self._add_range_widget(new_range)
-        self._mark_as_custom()
-
-    def _add_range_widget(self, trace_range):
-        """Add a range widget to the layout."""
-        widget = TraceRangeWidget(trace_range)
-        widget.removed.connect(self._remove_range_widget)
-        widget.changed.connect(self._mark_as_custom)
-        self.range_widgets.append(widget)
-
-        # Insert before the stretch
-        self.ranges_layout.insertWidget(len(self.range_widgets) - 1, widget)
-
-    def _remove_range_widget(self, widget):
-        """Remove a range widget."""
-        from ..config.constants import MIN_TRACE_RANGES
-
-        if len(self.range_widgets) <= MIN_TRACE_RANGES:
-            QMessageBox.warning(
-                self,
-                "Cannot Remove Range",
-                f"You must have at least {MIN_TRACE_RANGES} ranges."
-            )
-            return
-
-        if widget in self.range_widgets:
-            self.range_widgets.remove(widget)
-            widget.deleteLater()
-            self._mark_as_custom()
-
-    def _on_preset_changed(self, preset_name):
-        """Handle preset selection change."""
-        from ..config.trace_ranges import get_preset_by_name
-
-        if preset_name != "Custom":
-            self.trace_config = get_preset_by_name(preset_name)
-            self._populate_ranges()
-
-    def _mark_as_custom(self):
-        """Mark configuration as custom."""
-        if self.preset_combo.currentText() != "Custom":
-            self.preset_combo.blockSignals(True)
-            self.preset_combo.setCurrentText("Custom")
-            self.preset_combo.blockSignals(False)
-            self.trace_config.preset_name = "Custom"
-
-    def _on_accept(self):
-        """Validate and accept the configuration."""
-        # Get all ranges from widgets
-        ranges = [widget.get_trace_range() for widget in self.range_widgets]
-
-        if len(ranges) < 2:
-            QMessageBox.warning(
-                self,
-                "Invalid Configuration",
-                "You must define at least 2 ranges."
-            )
-            return
-
-        # Update configuration
-        from ..config.trace_ranges import TraceRangeConfiguration
-        self.trace_config = TraceRangeConfiguration(
-            ranges,
-            self.preset_combo.currentText()
-        )
-
-        self.accept()
-
-    def get_configuration(self):
-        """Get the configured trace range configuration."""
-        return self.trace_config
+    def wheelEvent(self, event):
+        # Check if the combo box's list is currently visible (open).
+        if self.view().isVisible():
+            # If the list is open, process the wheel event (change selection).
+            super().wheelEvent(event)
+        else:
+            # If the list is NOT open (user is likely scrolling the parent dialog), 
+            # ignore the event so it propagates up to the parent widget.
+            event.ignore()
