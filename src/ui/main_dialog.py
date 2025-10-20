@@ -42,13 +42,12 @@ from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer
 
 from .components import (
     DynamicSearchFilterWidget, StaticFilterWidget, SearchableStaticFilterWidget,
-    LoginDialog, LayerOptionsDialog, LargeImportWarningDialog, ImportProgressDialog, MessageBar
+    LoginDialog, LayerOptionsDialog, LargeImportWarningDialog, ImportProgressDialog, MessageBar,
+    FetchDetailsDialog, PolygonSelectionDialog
 )
 from ..config.constants import (
-    AUSTRALIAN_STATES, CHEMICAL_ELEMENTS, COMPARISON_OPERATORS, UI_CONFIG,
-    LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY, MAX_SAFE_IMPORT_LOCATION_ONLY,
-    PARTIAL_IMPORT_LIMIT_LOCATION_ONLY, DEFAULT_HOLE_TYPES, ROLE_DISPLAY_NAMES,
-    ROLE_DESCRIPTIONS
+    AUSTRALIAN_STATES, CHEMICAL_ELEMENTS, COMPARISON_OPERATORS, UI_CONFIG, DEFAULT_HOLE_TYPES, ROLE_DISPLAY_NAMES,
+    ROLE_DESCRIPTIONS, MAX_DISPLAY_RECORDS
 )
 from ..utils.logging import log_warning, log_error
 
@@ -61,7 +60,7 @@ class DataImporterDialog(QDialog):
     logout_requested = pyqtSignal()
     data_fetch_requested = pyqtSignal(str, dict, bool)  # tab_name, params, fetch_all
     data_clear_requested = pyqtSignal(str)  # tab_name
-    data_import_requested = pyqtSignal(str, str, object)  # tab_name, layer_name, color
+    data_import_requested = pyqtSignal(str, str, object, object, float, object, object, object)  # tab_name, layer_name, color, trace_config, point_size, collar_name, trace_name, trace_scale
     page_next_requested = pyqtSignal(str)  # tab_name
     page_previous_requested = pyqtSignal(str)  # tab_name
     cancel_request_requested = pyqtSignal()  # Cancel API request
@@ -288,53 +287,56 @@ class DataImporterDialog(QDialog):
             controls_layout.addRow("Hole Type & Depth:", hole_depth_layout)
             widgets['max_depth_input'] = max_depth_input
 
-            # Record count controls
+            # Record count controls with bounding box
             count_input = QLineEdit("100")
             # Add validator for positive integers only
             count_input.setValidator(QIntValidator(1, 999999999, count_input))
             # Connect to role-based validation
             count_input.textChanged.connect(lambda: self._validate_record_count(count_input, "Holes"))
 
-            fetch_all_checkbox = QCheckBox("Fetch all records")
-            fetch_all_checkbox.toggled.connect(count_input.setDisabled)
-            # Connect to custom handler for role-based restrictions
-            fetch_all_checkbox.toggled.connect(lambda checked: self._handle_fetch_all_toggled(checked, "Holes"))
+            # Bounding box button
+            bbox_button = QPushButton("📍 Select Area ")
+            bbox_button.setToolTip("Draw a bounding box on the map to filter by geographic area")
+            bbox_button.setMaximumWidth(110)
+            bbox_button.setStyleSheet(
+                "color: white;"
+            )
+            bbox_button.clicked.connect(lambda: self._handle_bbox_selection("Holes"))
 
-            # Fetch location only checkbox with info icon
-            fetch_location_only_checkbox = QCheckBox("Fetch Location Only")
+            # Bounding box indicator/clear button
+            bbox_indicator = QLabel("")
+            bbox_indicator.setVisible(False)
+            bbox_indicator.setStyleSheet(
+                "padding: 4px 8px; background-color: #359d33; color: white; "
+                "border-radius: 3px; font-size: 10px; font-weight: bold;"
+            )
 
-            # Create info icon button for holes section
-            holes_location_info_button = QPushButton("ℹ")
-            holes_location_info_button.setFixedSize(16, 16)
-            holes_location_info_button.setToolTip("Click for information about Fetch Location Only")
-            holes_location_info_button.setStyleSheet("""
-                QPushButton {
-                    border: 1px solid #999;
-                    border-radius: 10px;
-                    background-color: #e8f4f8;
-                    color: #2196F3;
-                    font-weight: bold;
-                    font-size: 12px;
-                }
-                QPushButton:hover {
-                    background-color: #d1e7dd;
-                    border-color: #2196F3;
-                }
-            """)
-            holes_location_info_button.clicked.connect(self.show_location_only_info)
+            bbox_clear_button = QPushButton("✕")
+            bbox_clear_button.setToolTip("Clear bounding box selection")
+            bbox_clear_button.setMaximumWidth(25)
+            bbox_clear_button.setMaximumHeight(25)
+            bbox_clear_button.setStyleSheet(
+                "color: white;"
+            )
+            bbox_clear_button.setVisible(False)
+            bbox_clear_button.clicked.connect(lambda: self._clear_bbox_selection("Holes"))
 
             records_layout = QHBoxLayout()
             records_layout.addWidget(count_input)
-            records_layout.addWidget(fetch_all_checkbox)
-            records_layout.addWidget(fetch_location_only_checkbox)
-            records_layout.addWidget(holes_location_info_button)
+            records_layout.addSpacing(10)
+            records_layout.addWidget(bbox_button)
+            records_layout.addSpacing(10)
+            records_layout.addWidget(bbox_indicator)
+            records_layout.addWidget(bbox_clear_button)
             records_layout.addStretch()
             controls_layout.addRow("No. of Records:", records_layout)
 
             widgets.update({
                 'count_input': count_input,
-                'fetch_all_checkbox': fetch_all_checkbox,
-                'fetch_location_only_checkbox': fetch_location_only_checkbox
+                'bbox_button': bbox_button,
+                'bbox_indicator': bbox_indicator,
+                'bbox_clear_button': bbox_clear_button,
+                'selected_bbox': None  # Store selected bounding box
             })
 
             # Fetch button
@@ -429,13 +431,48 @@ class DataImporterDialog(QDialog):
                 'value_container': value_container
             })
 
-            # Hole Type filter (separate row with container for proper alignment)
+            # Hole Type filter with From Depth and To Depth (in same row)
+            hole_depth_assays_layout = QHBoxLayout()
+            hole_depth_assays_layout.setSpacing(10)
+            
+            hole_depth_assays_layout.setAlignment(Qt.AlignTop)
+            
+            # Hole Type container (takes 2/3 of space)
             hole_type_container_assays = QWidget()
             hole_type_container_layout_assays = QVBoxLayout(hole_type_container_assays)
             hole_type_container_layout_assays.setContentsMargins(0, 0, 0, 0)
             hole_type_container_layout_assays.setAlignment(Qt.AlignTop)
             hole_type_container_layout_assays.addWidget(hole_type_filter)
-            controls_layout.addRow("Hole Type(s):", hole_type_container_assays)
+            hole_depth_assays_layout.addWidget(hole_type_container_assays, 2)
+
+            # From Depth input (takes 1/6 of space)
+            from_depth_container = QWidget()
+            from_depth_container_layout = QVBoxLayout(from_depth_container)
+            from_depth_container_layout.setContentsMargins(0, 0, 0, 0)
+            from_depth_container_layout.setSpacing(2)
+            from_depth_container_layout.setAlignment(Qt.AlignTop)
+            from_depth_input = QLineEdit()
+            from_depth_input.setPlaceholderText("From Depth (m):")
+            from_depth_input.setValidator(QIntValidator(0, 999999, from_depth_input))
+            from_depth_container_layout.addWidget(from_depth_input)
+            hole_depth_assays_layout.addWidget(from_depth_container, 1)
+
+            # To Depth input (takes 1/6 of space)
+            to_depth_container = QWidget()
+            to_depth_container_layout = QVBoxLayout(to_depth_container)
+            to_depth_container_layout.setContentsMargins(0, 0, 0, 0)
+            to_depth_container_layout.setSpacing(2)
+            to_depth_container_layout.setAlignment(Qt.AlignTop)
+
+            to_depth_input = QLineEdit()
+            to_depth_input.setPlaceholderText("To Depth (m):")
+            to_depth_input.setValidator(QIntValidator(0, 999999, to_depth_input))
+            to_depth_container_layout.addWidget(to_depth_input)
+            hole_depth_assays_layout.addWidget(to_depth_container, 1)
+
+            controls_layout.addRow("Hole Type & Depth:", hole_depth_assays_layout)
+            widgets['from_depth_input'] = from_depth_input
+            widgets['to_depth_input'] = to_depth_input
 
             # Company filter (separate row with container for proper alignment)
             company_filter = DynamicSearchFilterWidget()
@@ -448,53 +485,56 @@ class DataImporterDialog(QDialog):
             controls_layout.addRow("Company Name(s):", company_filter_container)
             widgets['company_filter'] = company_filter
 
-            # Record count controls
+            # Record count controls with bounding box
             count_input = QLineEdit("100")
             # Add validator for positive integers only
             count_input.setValidator(QIntValidator(1, 999999999, count_input))
             # Connect to role-based validation
             count_input.textChanged.connect(lambda: self._validate_record_count(count_input, "Assays"))
 
-            fetch_all_checkbox = QCheckBox("Fetch all records")
-            fetch_all_checkbox.toggled.connect(count_input.setDisabled)
-            # Connect to custom handler for role-based restrictions
-            fetch_all_checkbox.toggled.connect(lambda checked: self._handle_fetch_all_toggled(checked, "Assays"))
+            # Bounding box button
+            bbox_button = QPushButton("📍 Select Area ")
+            bbox_button.setToolTip("Draw a bounding box on the map to filter by geographic area")
+            bbox_button.setMaximumWidth(110)
+            bbox_button.setStyleSheet(
+                "color: white;"
+            )
+            bbox_button.clicked.connect(lambda: self._handle_bbox_selection("Assays"))
 
-            # Fetch location only checkbox with info icon
-            fetch_location_only_checkbox = QCheckBox("Fetch Location Only")
+            # Bounding box indicator/clear button
+            bbox_indicator = QLabel("")
+            bbox_indicator.setVisible(False)
+            bbox_indicator.setStyleSheet(
+                "padding: 4px 8px; background-color: #359d33; color: white; "
+                "border-radius: 3px; font-size: 10px; font-weight: bold;"
+            )
 
-            # Create info icon button for assays section
-            assays_location_info_button = QPushButton("ℹ")
-            assays_location_info_button.setFixedSize(20, 20)
-            assays_location_info_button.setToolTip("Click for information about Fetch Location Only")
-            assays_location_info_button.setStyleSheet("""
-                QPushButton {
-                    border: 1px solid #999;
-                    border-radius: 10px;
-                    background-color: #e8f4f8;
-                    color: #2196F3;
-                    font-weight: bold;
-                    font-size: 12px;
-                }
-                QPushButton:hover {
-                    background-color: #d1e7dd;
-                    border-color: #2196F3;
-                }
-            """)
-            assays_location_info_button.clicked.connect(self.show_location_only_info)
+            bbox_clear_button = QPushButton("✕")
+            bbox_clear_button.setToolTip("Clear bounding box selection")
+            bbox_clear_button.setMaximumWidth(25)
+            bbox_clear_button.setMaximumHeight(25)
+            bbox_clear_button.setStyleSheet(
+                "color: white;"
+            )
+            bbox_clear_button.setVisible(False)
+            bbox_clear_button.clicked.connect(lambda: self._clear_bbox_selection("Assays"))
 
             records_layout = QHBoxLayout()
             records_layout.addWidget(count_input)
-            records_layout.addWidget(fetch_all_checkbox)
-            records_layout.addWidget(fetch_location_only_checkbox)
-            records_layout.addWidget(assays_location_info_button)
+            records_layout.addSpacing(10)
+            records_layout.addWidget(bbox_button)
+            records_layout.addSpacing(10)
+            records_layout.addWidget(bbox_indicator)
+            records_layout.addWidget(bbox_clear_button)
             records_layout.addStretch()
             controls_layout.addRow("No. of Records:", records_layout)
 
             widgets.update({
                 'count_input': count_input,
-                'fetch_all_checkbox': fetch_all_checkbox,
-                'fetch_location_only_checkbox': fetch_location_only_checkbox
+                'bbox_button': bbox_button,
+                'bbox_indicator': bbox_indicator,
+                'bbox_clear_button': bbox_clear_button,
+                'selected_bbox': None  # Store selected bounding box
             })
 
             # Fetch button
@@ -622,23 +662,34 @@ class DataImporterDialog(QDialog):
     def _create_status_bar(self):
         """Create the status bar with cancel button."""
         status_layout = QHBoxLayout()
-        
+
         self.status_label = QLabel(UI_CONFIG['status_messages']['ready'])
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        
+
+        # Create "View Details" button - small and compact
+        self.view_details_button = QPushButton("View Details")
+        self.view_details_button.setDefault(False)
+        self.view_details_button.setAutoDefault(False)
+        self.view_details_button.setVisible(False)  # Hidden by default, shown after successful fetch
+        self.view_details_button.setMaximumWidth(90)
+        self.view_details_button.setMaximumHeight(22)
+
         # Create cancel button
         self.cancel_button = QPushButton("Cancel Request")
         self.cancel_button.setDefault(False)
         self.cancel_button.setAutoDefault(False)
         self.cancel_button.setVisible(False)  # Hidden by default
-        
+
         # Style will be applied by _apply_theme_aware_styling() method
-        
+
         status_layout.addWidget(self.status_label)
-        status_layout.addWidget(self.progress_bar)
+        status_layout.addSpacing(12)  # 12px spacing between status and button
+        status_layout.addWidget(self.view_details_button)
+        status_layout.addStretch()  # Push everything else to the right
+        status_layout.addWidget(self.progress_bar, 1)  # Stretch factor 1 - takes available space
         status_layout.addWidget(self.cancel_button)
-        
+
         self.main_layout.addLayout(status_layout)
     
     def _connect_signals(self):
@@ -646,7 +697,10 @@ class DataImporterDialog(QDialog):
         # Header buttons
         self.login_button.clicked.connect(self._handle_login_button)
         self.reset_all_button.clicked.connect(self._handle_reset_all)
-        
+
+        # View Details button
+        self.view_details_button.clicked.connect(self._handle_view_details)
+
         # Cancel button
         self.cancel_button.clicked.connect(self.cancel_request_requested.emit)
         
@@ -739,36 +793,41 @@ class DataImporterDialog(QDialog):
                 if value:
                     params['value'] = value
 
+            # Add depth range parameters if specified
+            from_depth = tab_widgets['from_depth_input'].text().strip()
+            to_depth = tab_widgets['to_depth_input'].text().strip()
+            if from_depth:
+                try:
+                    params['from_depth'] = int(from_depth)
+                except ValueError:
+                    pass  # Skip if invalid
+            if to_depth:
+                try:
+                    params['to_depth'] = int(to_depth)
+                except ValueError:
+                    pass  # Skip if invalid
+
             # Add companies parameter if specified (same as Holes section)
             companies = tab_widgets['company_filter'].currentData()
             if companies:
                 params['companies'] = ",".join(companies)
         
-        # Check if fetch_all is requested
-        fetch_all = tab_widgets['fetch_all_checkbox'].isChecked()
-
-        # Add fetch_all_records parameter when fetch all checkbox is checked
-        if fetch_all:
-            params['fetch_all_records'] = True
-
-        # Check if fetch_only_location is requested
-        fetch_location_only_checkbox = tab_widgets.get('fetch_location_only_checkbox')
-        fetch_location_only = fetch_location_only_checkbox.isChecked() if fetch_location_only_checkbox else False
-
-        if fetch_location_only:
-            params['fetch_only_location'] = True
-
         # Get requested record count
-        if not fetch_all:
-            try:
-                requested_count = int(tab_widgets['count_input'].text() or "100")
-                params['requested_count'] = requested_count
-            except ValueError:
-                requested_count = 100
-                params['requested_count'] = requested_count
+        try:
+            requested_count = int(tab_widgets['count_input'].text() or "100")
+            params['requested_count'] = requested_count
+        except ValueError:
+            requested_count = 100
+            params['requested_count'] = requested_count
 
-        # Emit request signal
-        self.data_fetch_requested.emit(tab_name, params, fetch_all)
+        # Add polygon coordinates if selected
+        selected_polygon = tab_widgets.get('selected_bbox')  # Still stored as 'selected_bbox' key
+        if selected_polygon and 'coords' in selected_polygon:
+            # Store polygon coords as list for special handling in API client
+            params['polygon_coords'] = selected_polygon['coords']
+
+        # Emit request signal (fetch_all is always False now)
+        self.data_fetch_requested.emit(tab_name, params, False)
     
     
     def _generate_dynamic_layer_name(self, tab_name: str) -> str:
@@ -813,26 +872,11 @@ class DataImporterDialog(QDialog):
                     name_parts.append(operator)
 
         # Add record count information
-        fetch_all = tab_widgets['fetch_all_checkbox'].isChecked()
-        fetch_location_only_checkbox = tab_widgets.get('fetch_location_only_checkbox')
-        fetch_location_only = fetch_location_only_checkbox.isChecked() if fetch_location_only_checkbox else False
-
-        if fetch_location_only:
-            name_parts.append("LocationOnly")
-            # Also add record count for location only if not fetch all
-            if not fetch_all:
-                try:
-                    requested_count = int(tab_widgets['count_input'].text() or "100")
-                    name_parts.append(f"{requested_count}rec")
-                except ValueError:
-                    name_parts.append("100rec")
-        elif not fetch_all:
-            try:
-                requested_count = int(tab_widgets['count_input'].text() or "100")
-                name_parts.append(f"{requested_count}rec")
-            except ValueError:
-                name_parts.append("100rec")
-        # For fetch_all, don't add anything as per requirements
+        try:
+            requested_count = int(tab_widgets['count_input'].text() or "100")
+            name_parts.append(f"{requested_count}rec")
+        except ValueError:
+            name_parts.append("100rec")
 
         # Join parts with underscores and limit total length
         layer_name = "_".join(name_parts)
@@ -845,14 +889,92 @@ class DataImporterDialog(QDialog):
 
     def _handle_import_request(self, tab_name: str):
         """Handle data import request."""
+        # Detect if this is assay data
+        is_assay_data = self._is_assay_data(tab_name)
+
         # Show layer options dialog with dynamic default name
         default_name = self._generate_dynamic_layer_name(tab_name)
-        options_dialog = LayerOptionsDialog(default_name, self)
-        
+        options_dialog = LayerOptionsDialog(default_name, is_assay_data, self)
+
         if options_dialog.exec_() == QDialog.Accepted:
-            layer_name, color = options_dialog.get_options()
-            self.data_import_requested.emit(tab_name, layer_name, color)
-    
+            options = options_dialog.get_options()
+
+            # Unpack options based on whether it's assay data
+            if is_assay_data:
+                group_name, collar_name, trace_name, point_size, color, trace_config, trace_scale = options
+                # For assay data, use group name as the "layer_name" for compatibility
+                layer_name = group_name
+            else:
+                layer_name, point_size, color = options
+                trace_config = None
+                trace_scale = None
+
+            # Emit with all parameters (need to update signal to include point_size)
+            self.data_import_requested.emit(tab_name, layer_name, color, trace_config, point_size,
+                                           collar_name if is_assay_data else None,
+                                           trace_name if is_assay_data else None,
+                                           trace_scale if is_assay_data else None)
+
+    def _is_assay_data(self, tab_name: str) -> bool:
+        """Check if the current tab contains assay data."""
+        # Simple check: Assays tab contains assay data
+        return tab_name == "Assays"
+
+    def _handle_view_details(self):
+        """Handle View Details button click - show fetch details dialog."""
+        if not self.data_manager:
+            return
+
+        # Get current tab
+        current_tab_index = self.tabs.currentIndex()
+        tab_name = "Holes" if current_tab_index == 0 else "Assays"
+
+        # Get fetch details from data manager
+        fetch_details = self.data_manager.get_fetch_details(tab_name)
+
+        if not fetch_details:
+            self.show_info("No fetch details available. Please fetch data first.")
+            return
+
+        # Show the fetch details dialog
+        details_dialog = FetchDetailsDialog(fetch_details, self)
+        details_dialog.exec_()
+
+    def _handle_bbox_selection(self, tab_name: str):
+        """Handle polygon selection button click - show map dialog."""
+        tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
+
+        # Get existing polygon if any
+        existing_polygon = tab_widgets.get('selected_bbox')  # Still stored as 'selected_bbox' key for now
+
+        # Show map dialog
+        polygon_dialog = PolygonSelectionDialog(self, existing_polygon)
+
+        if polygon_dialog.exec_() == QDialog.Accepted:
+            # Get selected polygon
+            selected_polygon = polygon_dialog.get_polygon()
+
+            if selected_polygon:
+                # Store in tab widgets
+                tab_widgets['selected_bbox'] = selected_polygon
+
+                # Update indicator to show polygon is active
+                num_vertices = len(selected_polygon['coords'])
+                tab_widgets['bbox_indicator'].setText(f"📍 Polygon ({num_vertices} vertices)")
+                tab_widgets['bbox_indicator'].setVisible(True)
+                tab_widgets['bbox_clear_button'].setVisible(True)
+
+    def _clear_bbox_selection(self, tab_name: str):
+        """Clear bounding box selection for a tab."""
+        tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
+
+        # Clear stored bounding box
+        tab_widgets['selected_bbox'] = None
+
+        # Hide indicator and clear button
+        tab_widgets['bbox_indicator'].setVisible(False)
+        tab_widgets['bbox_clear_button'].setVisible(False)
+
     def _show_role_info(self):
         """Show detailed information about the user's current role/plan."""
         if not self.data_manager or not self.data_manager.is_authenticated():
@@ -952,7 +1074,7 @@ class DataImporterDialog(QDialog):
             """)
 
     def _validate_record_count(self, count_input: QLineEdit, tab_name: str):
-        """Validate record count input for tier_1 users (max 1000 records)."""
+        """Validate record count input - max 1000 for tier_1, max 1M for tier_2/admin."""
         # Get the current text
         text = count_input.text().strip()
 
@@ -965,11 +1087,31 @@ class DataImporterDialog(QDialog):
         try:
             value = int(text)
 
-            # Check if user is tier_1 and exceeds limit
+            # Check if user is authenticated
             if self.data_manager and self.data_manager.is_authenticated():
                 role = self.data_manager.api_client.get_user_role()
 
-                if role == "tier_1" and value > 1000:
+                # Check 1M limit for all users
+                if value > 1000000:
+                    # Show error styling
+                    count_input.setStyleSheet("border: 2px solid #f44336; background-color: #ffebee;")
+
+                    # Reset to 1M
+                    count_input.blockSignals(True)
+                    count_input.setText("1000000")
+                    count_input.blockSignals(False)
+
+                    # Show message
+                    self.show_info(
+                        "Maximum Record Limit Exceeded\n\n"
+                        "1,000,000 is the maximum number of records that can be fetched at once.\n\n"
+                        "Your entry has been adjusted to 1,000,000 records."
+                    )
+
+                    # Clear error styling
+                    count_input.setStyleSheet("")
+                # Check tier_1 limit (1000 records)
+                elif role == "tier_1" and value > 1000:
                     # Show error styling
                     count_input.setStyleSheet("border: 2px solid #f44336; background-color: #ffebee;")
 
@@ -978,7 +1120,7 @@ class DataImporterDialog(QDialog):
                     count_input.setText("1000")
                     count_input.blockSignals(False)
 
-                    # Show message (this blocks until user clicks OK)
+                    # Show message
                     self.show_info(
                         "Free Trial Record Limit Exceeded\n\n"
                         "As a Free Trial user, you can fetch a maximum of 1,000 records at a time.\n\n"
@@ -986,93 +1128,34 @@ class DataImporterDialog(QDialog):
                         "Upgrade to Premium for unlimited record fetching!"
                     )
 
-                    # Clear error styling immediately after user dismisses the popup
+                    # Clear error styling
                     count_input.setStyleSheet("")
                 else:
                     # Valid input, clear any error styling
                     count_input.setStyleSheet("")
             else:
-                # Not logged in or not tier_1, clear any error styling
-                count_input.setStyleSheet("")
+                # Not logged in, still enforce 1M limit
+                if value > 1000000:
+                    count_input.setStyleSheet("border: 2px solid #f44336; background-color: #ffebee;")
+                    count_input.blockSignals(True)
+                    count_input.setText("1000000")
+                    count_input.blockSignals(False)
+                    self.show_info(
+                        "Maximum Record Limit Exceeded\n\n"
+                        "1,000,000 is the maximum number of records that can be fetched at once.\n\n"
+                        "Your entry has been adjusted to 1,000,000 records."
+                    )
+                    count_input.setStyleSheet("")
+                else:
+                    count_input.setStyleSheet("")
 
         except ValueError:
             # Invalid number, but let the QIntValidator handle it
             pass
 
-    def _handle_fetch_all_toggled(self, checked: bool, tab_name: str):
-        """Handle fetch all checkbox toggle with role-based validation."""
-        if not checked:
-            return  # Allow unchecking
-
-        # Get the widgets
-        tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
-        fetch_all_checkbox = tab_widgets['fetch_all_checkbox']
-        count_input = tab_widgets['count_input']
-
-        # Check if user is logged in
-        if not self.data_manager or not self.data_manager.is_authenticated():
-            # Block the check and show message
-            fetch_all_checkbox.blockSignals(True)
-            fetch_all_checkbox.setChecked(False)
-            fetch_all_checkbox.blockSignals(False)
-            # Re-enable the count input field
-            count_input.setEnabled(True)
-            self.show_info("Please login before using 'Fetch all records'")
-            return
-
-        # Check if user has permission based on role
-        if not self.data_manager.api_client.can_fetch_all_records():
-            role = self.data_manager.api_client.get_user_role()
-            # Block the check and show message
-            fetch_all_checkbox.blockSignals(True)
-            fetch_all_checkbox.setChecked(False)
-            fetch_all_checkbox.blockSignals(False)
-            # Re-enable the count input field
-            count_input.setEnabled(True)
-
-            if role == "tier_1":
-                self.show_info(
-                    "Fetch All Records - Free Trial Limitation\n\n"
-                    "You are currently on Free Trial. On this tier, you can fetch a maximum of 1000 records at a time.\n\n"
-                    "To unlock unlimited record fetching, please upgrade to Premium by contacting Needle Digital."
-                )
-            else:
-                self.show_info("You don't have permission to fetch all records.")
-
     def set_data_manager(self, data_manager):
         """Set the data manager reference for role checks."""
         self.data_manager = data_manager
-        # Update fetch all checkbox state based on role
-        self.update_fetch_all_permissions()
-
-    def update_fetch_all_permissions(self):
-        """Update fetch all checkbox state based on user role."""
-        # Check both tabs
-        for tab_name in ['Holes', 'Assays']:
-            tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
-            fetch_all_checkbox = tab_widgets['fetch_all_checkbox']
-
-            # Reset to unchecked and enabled by default
-            fetch_all_checkbox.setChecked(False)
-            fetch_all_checkbox.setEnabled(True)
-            fetch_all_checkbox.setToolTip("")
-
-            # If not logged in, keep enabled but show tooltip
-            if not self.data_manager or not self.data_manager.is_authenticated():
-                fetch_all_checkbox.setToolTip("Login required to fetch all records")
-                continue
-
-            # Check role-based permissions
-            role = self.data_manager.api_client.get_user_role()
-            can_fetch_all = self.data_manager.api_client.can_fetch_all_records()
-
-            if not can_fetch_all and role == "tier_1":
-                # Keep enabled but show tooltip - validation happens on click
-                fetch_all_checkbox.setToolTip(
-                    "Tier 1 (Trial): Limited to 1000 records per fetch. Upgrade to Tier 2 for unlimited fetching."
-                )
-            else:
-                fetch_all_checkbox.setToolTip("Fetch all available records matching the filters")
 
     def update_login_status(self, is_logged_in: bool, user_info: str = ""):
         """Update UI based on login status."""
@@ -1086,9 +1169,6 @@ class DataImporterDialog(QDialog):
 
             # Update role badge after login
             self._update_role_badge()
-
-            # Update fetch all checkbox permissions after login
-            self.update_fetch_all_permissions()
         else:
             self.login_button.setText("Login")
             self.reset_all_button.setVisible(False)
@@ -1096,9 +1176,6 @@ class DataImporterDialog(QDialog):
 
             # Hide role badge after logout
             self.role_badge.setVisible(False)
-
-            # Update fetch all checkbox permissions after logout
-            self.update_fetch_all_permissions()
     
     def update_status(self, message: str):
         """Update status message."""
@@ -1115,7 +1192,7 @@ class DataImporterDialog(QDialog):
     def show_data(self, tab_name: str, data: list, headers: list, pagination_info: dict):
         """Show data in the specified tab with pagination info."""
         tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
-        
+
         # Check if we're currently in loading state
         # If so, don't switch away from loading view unless we have data or this is a successful empty response
         # A successful empty response is indicated by pagination_info having has_data = False AND not being a reset operation
@@ -1124,7 +1201,7 @@ class DataImporterDialog(QDialog):
                                        not pagination_info.get('is_reset_operation', False))
         if self._loading_states[tab_name] and not data and not is_successful_empty_response:
             return
-        
+
         table = tab_widgets['table']
         loading_label = tab_widgets['loading_label']
         no_data_label = tab_widgets['no_data_label']
@@ -1132,57 +1209,34 @@ class DataImporterDialog(QDialog):
         import_button = tab_widgets['import_button']
         pagination_widget = tab_widgets['pagination_widget']
         page_label = tab_widgets['page_label']
-        
-        # Debug logging for troubleshooting
-
-        # Check if this is location-only data (based on headers)
-        is_location_only = (
-            len(headers) == 3 and
-            set(headers) == {'latitude', 'longitude', 'location_string'}
-        )
 
         if data:
-            # Check if we should display location-only view
-            if is_location_only:
-                # For location-only, remove location_string column and show only lat/lon
-                headers = ['latitude', 'longitude']  # Only show these 2 columns
-                # Filter data to only include lat/lon columns
-                filtered_data = []
-                for record in data:
-                    filtered_record = {
-                        'latitude': record.get('latitude', ''),
-                        'longitude': record.get('longitude', '')
-                    }
-                    filtered_data.append(filtered_record)
-                data = filtered_data
-
-                content_stack = tab_widgets['content_stack']
-                import_button = tab_widgets['import_button']
-                pagination_widget = tab_widgets['pagination_widget']
-
-                # Show the table with location data
-                content_stack.setCurrentWidget(table)
-                import_button.setVisible(True)
-                import_button.setEnabled(True)
-                pagination_widget.setVisible(False)
-                # Continue with normal table display logic below
-
-            # Calculate which data to show for current page (100 records max per page)
+            # Data is already limited to MAX_DISPLAY_RECORDS (1000) from data_manager
+            # No need to slice again - just paginate through it
             records_per_page = 100
             current_page = pagination_info.get('current_page', 1)
             start_idx = (current_page - 1) * records_per_page
             end_idx = min(start_idx + records_per_page, len(data))
             page_data = data[start_idx:end_idx]
-            
+
             # Enhanced table display with better UX
             table.setRowCount(len(page_data))
             table.setColumnCount(len(headers))
             table.setHorizontalHeaderLabels(headers)
 
+            # Create mapping from formatted headers back to original column names
+            # Formatted: "Hole Id" -> Original: "hole_id"
+            header_to_original = {
+                header: header.lower().replace(' ', '_')
+                for header in headers
+            }
+
             # Enhanced population with N/A for nulls and tooltips
             for row_idx, record in enumerate(page_data):
                 for col_idx, header in enumerate(headers):
-                    value = record.get(header, '')
+                    # Use original column name to access data
+                    original_key = header_to_original[header]
+                    value = record.get(original_key, '')
 
                     # Handle null/empty values
                     if value is None or value == '' or (isinstance(value, str) and value.strip() == ''):
@@ -1219,7 +1273,10 @@ class DataImporterDialog(QDialog):
             content_stack.setCurrentWidget(table)
             import_button.setVisible(True)
             import_button.setEnabled(True)
-            
+
+            # Show "View Details" button when data is successfully loaded
+            self.view_details_button.setVisible(True)
+
             # Update pagination
             prev_button = tab_widgets['prev_button']
             next_button = tab_widgets['next_button']
@@ -1227,9 +1284,18 @@ class DataImporterDialog(QDialog):
             if pagination_info['has_data'] and pagination_info['total_pages'] > 1:
                 pagination_widget.setVisible(True)
                 page_text = f"Page {pagination_info['current_page']} of {pagination_info['total_pages']}"
-                page_text += f" (showing {pagination_info['total_records']} records)"
+
+                # Add display limit info if applicable
+                total_records = pagination_info.get('total_records', 0)
+                display_count = pagination_info.get('display_count', 0)
+                if total_records > display_count:
+                    page_text += f" (showing first {display_count:,} rows)\n    Total rows fetched: {total_records:,}"
+                else:
+                    page_text += f" (showing {total_records:,} records)"
+
                 page_label.setText(page_text)
-                
+                page_label.setAlignment(Qt.AlignCenter)
+
                 # Enable/disable navigation buttons
                 prev_button.setEnabled(pagination_info['current_page'] > 1)
                 next_button.setEnabled(pagination_info['current_page'] < pagination_info['total_pages'])
@@ -1241,14 +1307,14 @@ class DataImporterDialog(QDialog):
             # Handle empty data case - either reset operation or API call with 0 results
             is_reset_operation = pagination_info.get('is_reset_operation', False)
 
+            # Hide "View Details" button when no data
+            self.view_details_button.setVisible(False)
+
             if is_reset_operation:
                 # Reset operation - show "Waiting for data..." message
                 content_stack.setCurrentWidget(loading_label)
                 import_button.setVisible(False)
                 pagination_widget.setVisible(False)
-            elif is_location_only:
-                # Even with no data, if it's a location-only request, show the location view with 0 records
-                self._show_location_only_data(tab_widgets, 0)
             else:
                 # API call returned 0 results - show "No data present with given filters"
                 content_stack.setCurrentWidget(no_data_label)
@@ -1301,22 +1367,6 @@ class DataImporterDialog(QDialog):
             "We will be adding more measurement units in the future."
         )
 
-    def show_location_only_info(self):
-        """Show information about Fetch Location Only feature."""
-        QMessageBox.information(
-            self, "Fetch Location Only Info",
-            "Enable this option for faster loading of large datasets.\n\n"
-            "When enabled:\n"
-            "• Only coordinates are fetched\n"
-            "• Significantly faster data retrieval and processing\n"
-            "• Reduced memory usage for large datasets\n"
-            "• Ideal for viewing drill hole locations on the map\n\n"
-            "When disabled:\n"
-            "• Full dataset with all attributes is fetched\n"
-            "• Slower for large datasets but includes complete data\n"
-            "• Better for detailed analysis and attribute queries\n\n"
-        )
-
     def show_cancel_button(self):
         """Show the cancel request button during API calls."""
         self.cancel_button.setVisible(True)
@@ -1343,15 +1393,15 @@ class DataImporterDialog(QDialog):
     def show_loading(self, tab_name: str):
         """Show loading state for the specified tab."""
         self._loading_states[tab_name] = True
-        
+
         tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
-        
+
         loading_label = tab_widgets['loading_label']
         content_stack = tab_widgets['content_stack']
         import_button = tab_widgets['import_button']
         pagination_widget = tab_widgets['pagination_widget']
         fetch_button = tab_widgets['fetch_button']
-        
+
         # Clear any previous data from memory and UI efficiently
         table = tab_widgets['table']
         table.setUpdatesEnabled(False)
@@ -1360,22 +1410,25 @@ class DataImporterDialog(QDialog):
             table.setColumnCount(0)
         finally:
             table.setUpdatesEnabled(True)
-        
+
         # Show loading state
         loading_label.setText("Loading data...")
         content_stack.setCurrentWidget(loading_label)
-        
+
         # Show progress bar immediately when loading starts at 1%
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(1)
-        
+
+        # Hide View Details button during loading/streaming
+        self.view_details_button.setVisible(False)
+
         # Hide other components during loading
         import_button.setVisible(False)
         pagination_widget.setVisible(False)
-        
+
         # Disable fetch button to prevent multiple requests
         fetch_button.setEnabled(False)
-        
+
         # Disable all UI controls during loading
         self._disable_all_controls()
     
@@ -1431,16 +1484,14 @@ class DataImporterDialog(QDialog):
                 tab_widgets['company_filter'].setEnabled(False)
                 tab_widgets['max_depth_input'].setEnabled(False)
                 tab_widgets['count_input'].setEnabled(False)
-                tab_widgets['fetch_all_checkbox'].setEnabled(False)
-                tab_widgets['fetch_location_only_checkbox'].setEnabled(False)
             else:  # Assays
                 tab_widgets['element_input'].setEnabled(False)
                 tab_widgets['operator_input'].setEnabled(False)
                 tab_widgets['value_input'].setEnabled(False)
+                tab_widgets['from_depth_input'].setEnabled(False)
+                tab_widgets['to_depth_input'].setEnabled(False)
                 tab_widgets['company_filter'].setEnabled(False)
                 tab_widgets['count_input'].setEnabled(False)
-                tab_widgets['fetch_all_checkbox'].setEnabled(False)
-                tab_widgets['fetch_location_only_checkbox'].setEnabled(False)
             
             # Disable pagination and import buttons
             tab_widgets['prev_button'].setEnabled(False)
@@ -1467,23 +1518,17 @@ class DataImporterDialog(QDialog):
             if tab_name == "Holes":
                 tab_widgets['company_filter'].setEnabled(True)
                 tab_widgets['max_depth_input'].setEnabled(True)
-                # Only enable count input if fetch all checkbox is not checked
-                fetch_all_checked = tab_widgets['fetch_all_checkbox'].isChecked()
-                tab_widgets['count_input'].setEnabled(not fetch_all_checked)
-                tab_widgets['fetch_all_checkbox'].setEnabled(True)
-                tab_widgets['fetch_location_only_checkbox'].setEnabled(True)
+                tab_widgets['count_input'].setEnabled(True)
             else:  # Assays
                 tab_widgets['element_input'].setEnabled(True)
                 tab_widgets['operator_input'].setEnabled(True)
                 # Check if value input should be enabled based on operator
                 operator_text = tab_widgets['operator_input'].currentText()
                 tab_widgets['value_input'].setEnabled(operator_text != "None")
+                tab_widgets['from_depth_input'].setEnabled(True)
+                tab_widgets['to_depth_input'].setEnabled(True)
                 tab_widgets['company_filter'].setEnabled(True)
-                # Only enable count input if fetch all checkbox is not checked
-                fetch_all_checked = tab_widgets['fetch_all_checkbox'].isChecked()
-                tab_widgets['count_input'].setEnabled(not fetch_all_checked)
-                tab_widgets['fetch_all_checkbox'].setEnabled(True)
-                tab_widgets['fetch_location_only_checkbox'].setEnabled(True)
+                tab_widgets['count_input'].setEnabled(True)
             
             # Note: fetch buttons are handled individually in hide_loading()
             # Note: pagination and import buttons are handled by show_data() based on data availability
@@ -1509,12 +1554,12 @@ class DataImporterDialog(QDialog):
         holes_tab['max_depth_input'].setStyleSheet("")  # Clear any error styling
         holes_tab['max_depth_input'].setToolTip("")  # Clear error tooltip
 
-        # Reset record count and fetch all checkbox
+        # Reset record count
         holes_tab['count_input'].setText("100")
-        holes_tab['fetch_all_checkbox'].setChecked(False)
-        holes_tab['count_input'].setEnabled(True)  # Ensure count input is enabled
-        holes_tab['fetch_location_only_checkbox'].setChecked(False)
-        
+
+        # Clear bounding box selection for Holes
+        self._clear_bbox_selection("Holes")
+
         # Reset Assays tab filters  
         assays_tab = self.assays_tab
         
@@ -1542,12 +1587,16 @@ class DataImporterDialog(QDialog):
         assays_tab['company_filter'].setCurrentData([])
         assays_tab['company_filter'].search_box.clear()
 
-        # Reset record count and fetch all checkbox
+        # Reset depth inputs
+        assays_tab['from_depth_input'].clear()
+        assays_tab['to_depth_input'].clear()
+
+        # Reset record count
         assays_tab['count_input'].setText("100")
-        assays_tab['fetch_all_checkbox'].setChecked(False)
-        assays_tab['count_input'].setEnabled(True)  # Ensure count input is enabled
-        assays_tab['fetch_location_only_checkbox'].setChecked(False)
-    
+
+        # Clear bounding box selection for Assays
+        self._clear_bbox_selection("Assays")
+
     def _on_company_search_text_changed(self, text: str):
         """Handle company search text changes with debouncing."""
         self._current_company_query = text
@@ -1694,6 +1743,16 @@ class DataImporterDialog(QDialog):
                 }
             """)
 
+            # View Details button - small and compact
+            self.view_details_button.setStyleSheet(secondary_style + """
+                QPushButton {
+                    font-size: 10px;
+                    padding: 2px 8px;
+                    min-height: 20px;
+                    max-height: 22px;
+                }
+            """)
+
 
         except Exception as e:
             log_warning(f"Failed to apply theme-aware styling: {e}")
@@ -1721,7 +1780,7 @@ class DataImporterDialog(QDialog):
                           self.holes_tab['fetch_button'], self.assays_tab['fetch_button'],
                           self.holes_tab['import_button'], self.assays_tab['import_button'],
                           self.holes_tab['location_import_button'], self.assays_tab['location_import_button'],
-                          self.cancel_button]:
+                          self.cancel_button, self.view_details_button]:
                 button.setStyleSheet(basic_style)
 
     def _setup_window_geometry(self):

@@ -36,8 +36,7 @@ from .src.utils.qgis_helpers import QGISLayerManager  # QGIS integration utiliti
 from .src.utils.logging import log_error, log_warning  # Centralized logging system
 from .src.config.constants import (  # Configuration constants and thresholds
     PLUGIN_NAME, PLUGIN_VERSION, LARGE_IMPORT_WARNING_THRESHOLD,
-    LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY, PARTIAL_IMPORT_LIMIT,
-    PARTIAL_IMPORT_LIMIT_LOCATION_ONLY, CHUNKED_IMPORT_THRESHOLD
+    PARTIAL_IMPORT_LIMIT, CHUNKED_IMPORT_THRESHOLD
 )
 
 
@@ -68,13 +67,32 @@ class DataImporter:
     def __init__(self, iface):
         """
         Initialize the plugin.
-        
+
         Args:
             iface: A reference to the QgisInterface
         """
         self.iface = iface
         self.plugin_dir = os.path.dirname(__file__)
-        
+
+        # Check QGIS version compatibility
+        from qgis.core import Qgis
+        qgis_version_int = Qgis.QGIS_VERSION_INT
+        qgis_version_str = Qgis.QGIS_VERSION
+
+        # Log version information for debugging
+        from .src.utils.logging import log_info, log_warning, log_error
+        log_info("=" * 70)
+        log_info(f"ND Data Importer Plugin v{PLUGIN_VERSION} initializing...")
+        log_info(f"QGIS Version: {qgis_version_str} (int: {qgis_version_int})")
+
+        # Warn if QGIS version is below minimum requirement
+        if qgis_version_int < 30000:  # Less than 3.0.0
+            log_error("This plugin requires QGIS 3.0 or newer!")
+            log_error(f"Current version: {qgis_version_str}")
+        else:
+            log_info(f"QGIS version check passed (minimum: 3.0, current: {qgis_version_str})")
+        log_info("=" * 70)
+
         # Initialize locale - handle different QGIS versions robustly
         locale = 'en'  # Default fallback
         try:
@@ -96,7 +114,7 @@ class DataImporter:
         # Initialize components
         self.actions = []
         self.menu = self.tr(u'&Needle Digital Plugin')
-        
+
         # Core components
         self.data_manager = None
         self.layer_manager = None
@@ -246,7 +264,7 @@ class DataImporter:
         """Handle login request from dialog."""
         try:
             if not self.login_dlg:
-                self.login_dlg = LoginDialog(self.dlg)
+                self.login_dlg = LoginDialog(self.dlg, self.data_manager.api_client)
                 self.login_dlg.login_attempt.connect(self._handle_login_attempt)
             
             # Show login dialog
@@ -364,7 +382,7 @@ class DataImporter:
 
             # Show login dialog directly without error message
             if not self.login_dlg:
-                self.login_dlg = LoginDialog(self.dlg)
+                self.login_dlg = LoginDialog(self.dlg, self.data_manager.api_client)
                 self.login_dlg.login_attempt.connect(self._handle_login_attempt)
 
             self.login_dlg.exec_()
@@ -394,32 +412,31 @@ class DataImporter:
             log_error(error_msg)
             self.dlg.show_error(error_msg)
 
-    def _handle_data_import_request(self, tab_name, layer_name, color):
+    def _handle_data_import_request(self, tab_name, layer_name, color, trace_config=None, point_size=3.0, collar_name=None, trace_name=None, trace_scale=None):
         """Handle data import request with intelligent large dataset optimization.
-        
+
         This method manages the complete data import workflow including:
         1. Data validation and retrieval
         2. Automatic OpenStreetMap base layer addition
         3. Large dataset detection and user warnings
         4. Performance optimization through chunked processing
         5. Memory management for large imports
-        
+        6. Specialized trace visualization for assay data
+
         Args:
             tab_name (str): Source tab name ('Holes' or 'Assays')
             layer_name (str): Name for the new QGIS layer
             color (QColor): Color for point styling in the layer
-            
+
         The method automatically handles:
         - Small datasets (<5000 records): Direct import
         - Medium datasets (5000-50000 records): Chunked import with progress
         - Large datasets (50000+ records): User warning with import options
+        - Assay data: Trace line visualization with depth intervals
         """
         try:
             # Get data from data manager - includes both data rows and column headers
             data, headers = self.data_manager.get_tab_data(tab_name)
-
-            # Check if this is location-only data
-            is_location_only = self.data_manager.is_tab_location_only(tab_name)
 
             # Validate that we have data to import
             if not data:
@@ -436,13 +453,14 @@ class DataImporter:
             else:
                 pass
 
+            # Detect if this is assay data with depth intervals
+            is_assay_data = self._is_assay_data(data)
+
             # Large dataset detection - warn users about potential performance impact
-            # Use appropriate threshold based on data type (location-only has 4x higher threshold)
-            warning_threshold = LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY if is_location_only else LARGE_IMPORT_WARNING_THRESHOLD
             warning_dialog_shown = False
-            if record_count >= warning_threshold:
-                # Show warning dialog with location-only flag
-                warning_dialog = LargeImportWarningDialog(record_count, is_location_only, self.dlg)
+            if record_count >= LARGE_IMPORT_WARNING_THRESHOLD:
+                # Show warning dialog
+                warning_dialog = LargeImportWarningDialog(record_count, self.dlg)
                 result = warning_dialog.exec_()
                 warning_dialog_shown = True
 
@@ -454,41 +472,77 @@ class DataImporter:
                 if user_choice == LargeImportWarningDialog.CANCEL:
                     return
                 elif user_choice == LargeImportWarningDialog.IMPORT_PARTIAL:
-                    # Import only first records using appropriate limit for data type
-                    partial_limit = PARTIAL_IMPORT_LIMIT_LOCATION_ONLY if is_location_only else PARTIAL_IMPORT_LIMIT
-                    data = data[:partial_limit]
+                    # Import only first records
+                    data = data[:PARTIAL_IMPORT_LIMIT]
                     record_count = len(data)
                 # If IMPORT_ALL, continue with full dataset
 
-            # Use chunked import for datasets > CHUNKED_IMPORT_THRESHOLD records
-            if record_count > CHUNKED_IMPORT_THRESHOLD:
-                self._perform_chunked_import(data, layer_name, color, record_count, warning_dialog_shown, is_location_only)
+            # For assay data, use trace visualization with progress dialog
+            if is_assay_data:
+                element = self._extract_element_from_data(data)
+
+                # Show progress dialog for large assay datasets
+                if record_count > CHUNKED_IMPORT_THRESHOLD:
+                    progress_dialog = ImportProgressDialog(record_count, self.dlg)
+                    progress_dialog.show()
+                    progress_dialog.update_progress(0, "Creating trace visualization...")
+
+                    # Define progress callback for trace layer creation
+                    def progress_callback(processed_count, message):
+                        if progress_dialog.wasCanceled():
+                            raise InterruptedError("Import cancelled by user")
+                        progress_dialog.update_progress(processed_count, message)
+
+                    try:
+                        success, message = self.layer_manager.create_assay_trace_layer(
+                            layer_name, data, color, element, "assay_value", progress_callback, trace_config,
+                            point_size, collar_name, trace_name, layer_name, trace_scale
+                        )
+                        progress_dialog.finish_import(success, record_count if success else 0, message)
+                        self._handle_import_result(success, message, warning_dialog_shown)
+                    except InterruptedError:
+                        progress_dialog.finish_import(False, 0, "Import was cancelled by user.")
+                        self.dlg.show_info("Import was cancelled.")
+                    except Exception as e:
+                        error_msg = f"Trace visualization failed: {str(e)}"
+                        progress_dialog.finish_import(False, 0, error_msg)
+                        self.dlg.show_error(error_msg)
+                else:
+                    # Small dataset - no progress dialog
+                    success, message = self.layer_manager.create_assay_trace_layer(
+                        layer_name, data, color, element, "assay_value", None, trace_config,
+                        point_size, collar_name, trace_name, layer_name, trace_scale
+                    )
+                    self._handle_import_result(success, message, warning_dialog_shown)
+            # For non-assay data, use point layers with optional chunking
+            elif record_count > CHUNKED_IMPORT_THRESHOLD:
+                self._perform_chunked_import(data, layer_name, color, record_count, warning_dialog_shown, point_size)
             else:
                 # Use regular import for small datasets
-                success, message = self.layer_manager.create_point_layer(layer_name, data, color, is_location_only)
+                success, message = self.layer_manager.create_point_layer(layer_name, data, color, point_size)
                 self._handle_import_result(success, message, warning_dialog_shown)
-            
+
         except Exception as e:
             error_msg = f"Data import error: {str(e)}"
             log_error(error_msg)
             self.dlg.show_error(error_msg)
     
-    def _perform_chunked_import(self, data, layer_name, color, record_count, warning_dialog_shown=False, is_location_only=False):
+    def _perform_chunked_import(self, data, layer_name, color, record_count, warning_dialog_shown=False, point_size=3.0):
         """Perform chunked import with progress dialog."""
         # Create progress dialog
         progress_dialog = ImportProgressDialog(record_count, self.dlg)
         progress_dialog.show()
-        
+
         # Define progress callback
         def progress_callback(processed_count, chunk_info):
             if progress_dialog.wasCanceled():
                 raise InterruptedError("Import cancelled by user")
             progress_dialog.update_progress(processed_count, chunk_info)
-        
+
         try:
             # Perform chunked import
             success, message = self.layer_manager.create_point_layer_chunked(
-                layer_name, data, color, progress_callback, is_location_only
+                layer_name, data, color, progress_callback, point_size
             )
             
             # Update final progress
@@ -520,6 +574,68 @@ class DataImporter:
                 self.dlg.show_plugin_message(message, "success", 5000)
         else:
             self.dlg.show_error(message)
+
+    def _is_assay_data(self, data):
+        """Detect if data is assay data with depth intervals.
+
+        Args:
+            data: List of data records
+
+        Returns:
+            bool: True if data has from_depth and to_depth fields
+        """
+        if not data or len(data) == 0:
+            return False
+
+        # Check first record for depth fields
+        first_record = data[0]
+        has_from_depth = 'from_depth' in first_record
+        has_to_depth = 'to_depth' in first_record
+
+        return has_from_depth and has_to_depth
+
+    def _extract_element_from_data(self, data):
+        """Extract element name from assay data.
+
+        Looks for element fields (e.g., 'au', 'cu', 'fe') in the data.
+
+        Args:
+            data: List of assay data records
+
+        Returns:
+            str: Element name (e.g., 'Au', 'Cu') or 'Value' if not found
+        """
+        if not data or len(data) == 0:
+            return 'Value'
+
+        # Common element symbols in lowercase
+        common_elements = [
+            'au', 'ag', 'cu', 'pb', 'zn', 'fe', 'ni', 'co', 'pt', 'pd',
+            'mo', 'sn', 'w', 'li', 'be', 'ta', 'nb', 're', 'u', 'th'
+        ]
+
+        # Check first record for element fields
+        first_record = data[0]
+        for key in first_record.keys():
+            key_lower = key.lower()
+            if key_lower in common_elements:
+                # Capitalize element symbol
+                return key.upper()
+
+        # Fallback: look for any numeric field that's not depth/coordinate
+        exclude_fields = ['from_depth', 'to_depth', 'lat', 'lon', 'latitude', 'longitude',
+                         'hole_id', 'sample_id', 'max_depth']
+        for key in first_record.keys():
+            if key.lower() not in exclude_fields:
+                value = first_record[key]
+                # Check if it's numeric
+                try:
+                    float(value)
+                    return key.title()
+                except (ValueError, TypeError):
+                    continue
+
+        return 'Value'
     
     def _handle_cancel_request(self):
         """Handle cancel request."""

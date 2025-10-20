@@ -75,3 +75,6 @@ help/_build/
 help/build/
 
 data_importer.zip
+
+requirement.txt
+setup_env.sh

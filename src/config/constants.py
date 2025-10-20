@@ -75,27 +75,24 @@ ROLE_DESCRIPTIONS = {
 
 # API Configuration
 NEEDLE_FIREBASE_API_KEY = "AIzaSyCuX5I0TaQCVmIUVdo1uM_aOQ3zVkrUV8Y"
-NEEDLE_BASE_API_URL = "https://master.api.drh.needle-digital.com"
+NEEDLE_BASE_API_URL = "https://master.api.agni.needle-digital.com"
 
-# API Request Limits
-# Used in: src/core/data_manager.py for chunking API requests
-API_FETCH_LIMIT = 50000  # Maximum records per API request for full data
-API_FETCH_LIMIT_LOCATION_ONLY = 200000  # 4x limit for location-only requests (coordinates only)
+# Streaming Configuration
+# Used in: src/ui/main_dialog.py for limiting table display
+MAX_DISPLAY_RECORDS = 1000  # Only show first 1K records in table for performance
+STREAMING_BUFFER_SIZE = 8192  # Bytes for SSE parsing buffer
 
 # Large Dataset Warning Thresholds
 # Used in: data_importer.py to show warning dialog before importing large datasets
-LARGE_IMPORT_WARNING_THRESHOLD = 50000  # Show warning above this count (full data)
-LARGE_IMPORT_WARNING_THRESHOLD_LOCATION_ONLY = 200000  # Warning threshold for location-only data
+LARGE_IMPORT_WARNING_THRESHOLD = 50000  # Show warning above this count
 
 # Import Safety Limits
 # Used in: src/ui/components.py (LargeImportWarningDialog) for button styling and recommendations
-MAX_SAFE_IMPORT = 100000  # Mark "Import All" as not recommended above this count (full data)
-MAX_SAFE_IMPORT_LOCATION_ONLY = 400000  # Safe import limit for location-only data
+MAX_SAFE_IMPORT = 100000  # Mark "Import All" as not recommended above this count
 
 # Partial Import Limits
 # Used in: data_importer.py for "Import First X Records" functionality
-PARTIAL_IMPORT_LIMIT = 50000  # Maximum records for partial import (full data)
-PARTIAL_IMPORT_LIMIT_LOCATION_ONLY = 200000  # Maximum records for partial import (location-only)
+PARTIAL_IMPORT_LIMIT = 50000  # Maximum records for partial import
 
 # Performance Configuration
 # Used in: src/utils/qgis_helpers.py for chunked imports and performance optimization
@@ -110,6 +107,20 @@ OSM_LAYER_URL = "type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png&zma
 # Used in: src/utils/qgis_helpers.py to skip auto-zoom for large datasets (prevents UI freezing)
 AUTO_ZOOM_THRESHOLD = 50000  # Don't auto-zoom for datasets larger than this
 
+# Drill Hole Trace Visualization Configuration
+# Used in: src/utils/qgis_helpers.py for assay data trace line visualization
+TRACE_SCALE_THRESHOLD = 50000  # Map scale at which trace lines become visible (1:50,000)
+TRACE_DEFAULT_OFFSET_SCALE = 10.0  # Depth/offset ratio when max_depth is unavailable (lower = longer lines)
+TRACE_LINE_WIDTH = 3.0  # Default trace line width in pixels
+COLLAR_POINT_SIZE = 6.0  # Default collar point size in pixels
+TRACE_ELEMENT_STACK_OFFSET = 0.00005  # Horizontal offset between multiple element trace layers
+
+# Trace Range Configuration
+# Used in: src/ui/components.py (TraceRangeConfigDialog) for validation
+MIN_TRACE_RANGES = 2  # Minimum number of ranges required
+MAX_TRACE_RANGES = 10  # Maximum number of ranges allowed
+DEFAULT_TRACE_RANGE_PRESET = "Default"  # Default preset to use
+
 # Australian states and territories
 AUSTRALIAN_STATES: List[Tuple[str, str]] = [
     ("New South Wales", "NSW"),
@@ -123,32 +134,25 @@ AUSTRALIAN_STATES: List[Tuple[str, str]] = [
 
 # Chemical elements for assay filtering
 # Format: (Display Name, Symbol)
+# Sorted alphabetically by element name (not symbol)
 CHEMICAL_ELEMENTS: List[Tuple[str, str]] = [
-    ('Silver - Ag', 'ag'), ('Aluminum - Al', 'al'), ('Americium - Am', 'am'), ('Argon - Ar', 'ar'), 
-    ('Arsenic - As', 'as'), ('Astatine - At', 'at'), ('Gold - Au', 'au'), ('Boron - B', 'b'), 
-    ('Barium - Ba', 'ba'), ('Beryllium - Be', 'be'), ('Berkelium - Bk', 'bk'), ('Bromine - Br', 'br'), 
-    ('Carbon - C', 'c'), ('Calcium - Ca', 'ca'), ('Cadmium - Cd', 'cd'), ('Cerium - Ce', 'ce'), 
-    ('Californium - Cf', 'cf'), ('Chlorine - Cl', 'cl'), ('Curium - Cm', 'cm'), ('Cobalt - Co', 'co'), 
-    ('Chromium - Cr', 'cr'), ('Cesium - Cs', 'cs'), ('Copper - Cu', 'cu'), ('Dysprosium - Dy', 'dy'), 
-    ('Erbium - Er', 'er'), ('Einsteinium - Es', 'es'), ('Europium - Eu', 'eu'), ('Fluorine - F', 'f'), 
-    ('Iron - Fe', 'fe'), ('Fermium - Fm', 'fm'), ('Francium - Fr', 'fr'), ('Gallium - Ga', 'ga'), 
-    ('Gadolinium - Gd', 'gd'), ('Germanium - Ge', 'ge'), ('Hydrogen - H', 'h'), ('Hafnium - Hf', 'hf'), 
-    ('Mercury - Hg', 'hg'), ('Holmium - Ho', 'ho'), ('Iodine - I', 'i'), ('Indium - In', 'in'), 
-    ('Iridium - Ir', 'ir'), ('Potassium - K', 'k'), ('Krypton - Kr', 'kr'), ('Lanthanum - La', 'la'), 
-    ('Lithium - Li', 'li'), ('Lawrencium - Lr', 'lr'), ('Lutetium - Lu', 'lu'), ('Mendelevium - Md', 'md'), 
-    ('Magnesium - Mg', 'mg'), ('Manganese - Mn', 'mn'), ('Molybdenum - Mo', 'mo'), ('Nitrogen - N', 'n'), 
-    ('Sodium - Na', 'na'), ('Niobium - Nb', 'nb'), ('Neodymium - Nd', 'nd'), ('Neon - Ne', 'ne'), 
-    ('Nickel - Ni', 'ni'), ('Nobelium - No', 'no'), ('Neptunium - Np', 'np'), ('Oxygen - O', 'o'), 
-    ('Osmium - Os', 'os'), ('Phosphorus - P', 'p'), ('Protactinium - Pa', 'pa'), ('Lead - Pb', 'pb'), 
-    ('Palladium - Pd', 'pd'), ('Promethium - Pm', 'pm'), ('Polonium - Po', 'po'), ('Praseodymium - Pr', 'pr'), 
-    ('Platinum - Pt', 'pt'), ('Plutonium - Pu', 'pu'), ('Radium - Ra', 'ra'), ('Rubidium - Rb', 'rb'), 
-    ('Rhenium - Re', 're'), ('Rutherfordium - Rf', 'rf'), ('Rhodium - Rh', 'rh'), ('Radon - Rn', 'rn'), 
-    ('Ruthenium - Ru', 'ru'), ('Sulfur - S', 's'), ('Antimony - Sb', 'sb'), ('Scandium - Sc', 'sc'), 
-    ('Selenium - Se', 'se'), ('Silicon - Si', 'si'), ('Samarium - Sm', 'sm'), ('Tin - Sn', 'sn'), 
-    ('Strontium - Sr', 'sr'), ('Tantalum - Ta', 'ta'), ('Terbium - Tb', 'tb'), ('Technetium - Tc', 'tc'), 
-    ('Tellurium - Te', 'te'), ('Thorium - Th', 'th'), ('Titanium - Ti', 'ti'), ('Thallium - Tl', 'tl'), 
-    ('Thulium - Tm', 'tm'), ('Uranium - U', 'u'), ('Vanadium - V', 'v'), ('Tungsten - W', 'w'), 
-    ('Xenon - Xe', 'xe'), ('Yttrium - Y', 'y'), ('Ytterbium - Yb', 'yb'), ('Zinc - Zn', 'zn'), 
+    ('Aluminum - Al', 'al'), ('Antimony - Sb', 'sb'), 
+    ('Arsenic - As', 'as'), ('Barium - Ba', 'ba'), 
+    ('Beryllium - Be', 'be'), ('Boron - B', 'b'), ('Bromine - Br', 'br'), ('Cadmium - Cd', 'cd'),
+    ('Calcium - Ca', 'ca'), ('Carbon - C', 'c'), ('Cerium - Ce', 'ce'),
+    ('Cesium - Cs', 'cs'), ('Chlorine - Cl', 'cl'), ('Chromium - Cr', 'cr'), ('Cobalt - Co', 'co'),
+    ('Copper - Cu', 'cu'), ('Dysprosium - Dy', 'dy'), 
+    ('Erbium - Er', 'er'), ('Europium - Eu', 'eu'), ('Fluorine - F', 'f'),
+    ('Gadolinium - Gd', 'gd'), ('Gallium - Ga', 'ga'), ('Germanium - Ge', 'ge'),
+    ('Gold - Au', 'au'), ('Hafnium - Hf', 'hf'), ('Holmium - Ho', 'ho'), 
+    ('Indium - In', 'in'), ('Iodine - I', 'i'), ('Iridium - Ir', 'ir'), ('Iron - Fe', 'fe'), ('Lanthanum - La', 'la'), ('Lead - Pb', 'pb'),
+    ('Lithium - Li', 'li'), ('Lutetium - Lu', 'lu'), ('Magnesium - Mg', 'mg'), ('Manganese - Mn', 'mn'), ('Mercury - Hg', 'hg'), ('Molybdenum - Mo', 'mo'), ('Neodymium - Nd', 'nd'), ('Nickel - Ni', 'ni'), ('Niobium - Nb', 'nb'), ('Osmium - Os', 'os'), ('Palladium - Pd', 'pd'), ('Phosphorus - P', 'p'), ('Platinum - Pt', 'pt'), ('Potassium - K', 'k'), ('Praseodymium - Pr', 'pr'), ('Rhenium - Re', 're'),
+    ('Rhodium - Rh', 'rh'), ('Rubidium - Rb', 'rb'), ('Ruthenium - Ru', 'ru'),
+    ('Samarium - Sm', 'sm'), ('Scandium - Sc', 'sc'), ('Selenium - Se', 'se'), ('Silicon - Si', 'si'),
+    ('Silver - Ag', 'ag'), ('Sodium - Na', 'na'), ('Strontium - Sr', 'sr'), ('Sulfur - S', 's'),
+    ('Tantalum - Ta', 'ta'),  ('Tellurium - Te', 'te'), ('Terbium - Tb', 'tb'),
+    ('Thallium - Tl', 'tl'), ('Thorium - Th', 'th'), ('Thulium - Tm', 'tm'), ('Tin - Sn', 'sn'),
+    ('Titanium - Ti', 'ti'), ('Tungsten - W', 'w'), ('Uranium - U', 'u'), ('Vanadium - V', 'v'), ('Ytterbium - Yb', 'yb'), ('Yttrium - Y', 'y'), ('Zinc - Zn', 'zn'),
     ('Zirconium - Zr', 'zr')
 ]
 
@@ -157,10 +161,9 @@ COMPARISON_OPERATORS: List[str] = ['>', '<', '=', '!=', '>=', '<=']
 
 # API endpoints
 API_ENDPOINTS = {
-    'holes_count': 'plugin/fetch_dh_count',
-    'holes_data': 'plugin/fetch_drill_holes',
-    'assays_count': 'plugin/fetch_assay_count',
-    'assays_data': 'plugin/fetch_assay_samples',
+    # V2 Streaming APIs
+    'holes_data': 'plugin/v2/fetch_drill_holes',
+    'assays_data': 'plugin/v2/fetch_assay_samples',
     'companies_search': 'companies/search',
 }
 
@@ -196,8 +199,6 @@ UI_CONFIG = {
 # Validation messages
 VALIDATION_MESSAGES = {
     'auth_required': 'You must be logged in to fetch data.',
-    'fetch_all_no_state': 'Currenlty our plugin support fetching all data state-wise, due to memory issue of QGIS. Please select 1 state for which you want to fetch all data.\n\nNote - If you want all records for mutiple states you can enable - Fetch Location Only checkbox',
-    'fetch_all_multiple_states': 'Currenlty our plugin support fetching all data state-wise, due to memory issue of QGIS. Please select 1 state for which you want to fetch all data.\n\nNote - If you want all records for mutiple states you can enable - Fetch Location Only checkbox',
     'invalid_credentials': 'A valid email and password are required.',
     'network_error': 'Network error occurred. Please check your connection and try again.',
     'api_error': 'API request failed. Please try again later.',

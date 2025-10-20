@@ -6,15 +6,20 @@ Contains reusable widgets and layouts for the plugin interface.
 from qgis.PyQt.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QLayout, QComboBox,
     QListView, QDialog, QLineEdit, QFormLayout, QDialogButtonBox, QMessageBox,
-    QColorDialog, QProgressDialog, QScrollArea, QFrame
+    QColorDialog, QProgressDialog, QScrollArea, QFrame, QTableWidget, QTableWidgetItem, QHeaderView,
+    QSizePolicy, QToolButton, QDoubleSpinBox
 )
-from qgis.PyQt.QtGui import QFont, QColor, QStandardItemModel, QStandardItem
+from qgis.PyQt.QtGui import QFont, QColor, QStandardItemModel, QStandardItem, QCursor, QIcon
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize, QEvent, QTimer
+from qgis.gui import QgsMapCanvas, QgsMapToolPan, QgsMapToolZoom, QgsMapTool, QgsRubberBand
+from qgis.core import (
+    QgsVectorLayer, QgsProject, QgsCoordinateReferenceSystem, QgsRectangle,
+    QgsGeometry, QgsPointXY, QgsWkbTypes, QgsFeature, QgsFillSymbol, QgsRasterLayer
+)
 
 from ..utils.logging import log_info, log_error, log_warning, log_debug
 from ..config.constants import (
-    MAX_SAFE_IMPORT, PARTIAL_IMPORT_LIMIT,
-    MAX_SAFE_IMPORT_LOCATION_ONLY, PARTIAL_IMPORT_LIMIT_LOCATION_ONLY
+    MAX_SAFE_IMPORT, OSM_LAYER_NAME, OSM_LAYER_URL, PARTIAL_IMPORT_LIMIT, TRACE_SCALE_THRESHOLD
 )
 
 
@@ -871,19 +876,26 @@ class StaticFilterWidget(QWidget):
 
 class LoginDialog(QDialog):
     """Dialog for user authentication."""
-    
+
     login_attempt = pyqtSignal(str, str)
-    
-    def __init__(self, parent=None):
+
+    def __init__(self, parent=None, api_client=None):
         super(LoginDialog, self).__init__(parent)
         self.setWindowTitle("Login - Needle Digital")
         self.setMinimumWidth(350)
         self.setModal(True)
-        
+        self.api_client = api_client
+
         # Email input
         self.email_input = QLineEdit()
         self.email_input.setPlaceholderText("Enter your email address")
-        
+
+        # Auto-fill email if available
+        if self.api_client:
+            last_email = self.api_client.get_last_login_email()
+            if last_email:
+                self.email_input.setText(last_email)
+
         # Password input
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)
@@ -919,7 +931,13 @@ class LoginDialog(QDialog):
         
         # Connect Enter key to login
         self.password_input.returnPressed.connect(self.handle_login_attempt)
-    
+
+        # Set focus: password if email is pre-filled, otherwise email
+        if self.email_input.text():
+            self.password_input.setFocus()
+        else:
+            self.email_input.setFocus()
+
     def handle_login_attempt(self):
         """Handle login button click."""
         self.error_label.setVisible(False)
@@ -943,33 +961,367 @@ class LoginDialog(QDialog):
 
 class LayerOptionsDialog(QDialog):
     """Dialog for configuring layer import options."""
-    
-    def __init__(self, default_name="Imported Layer", parent=None):
+
+    def __init__(self, default_name="Imported Layer", is_assay_data=False, parent=None):
+        """
+        Initialize layer options dialog.
+
+        Args:
+            default_name: Default layer name
+            is_assay_data: True if importing assay data (shows trace range options)
+            parent: Parent widget
+        """
         super().__init__(parent)
         self.setWindowTitle("Layer Import Options")
         self.setModal(True)
-        
-        # Layer name input
-        self.layer_name_input = QLineEdit(default_name)
-        
-        # Color selection
-        self.color_button = QPushButton("Select Point Color")
-        self.color_button.setDefault(False)
+        self.is_assay_data = is_assay_data
+        self.trace_range_config = None
+
+        # Initialize trace config for assay data
+        if self.is_assay_data:
+            from ..config.trace_ranges import get_industry_standard_preset
+            self.trace_range_config = get_industry_standard_preset()
+
+        self._setup_ui(default_name)
+
+    def _setup_ui(self, default_name):
+        """Setup the dialog UI."""
+        from ..config.trace_ranges import get_available_presets
+
+        layout = QVBoxLayout(self)
+        self.setMinimumWidth(600)
+
+        # Form layout for basic options
+        form_layout = QFormLayout()
+
+        # For assay data, show group name, collar layer name, and trace layer name
+        if self.is_assay_data:
+            # Group name
+            self.group_name_input = QLineEdit(default_name + " Group")
+            form_layout.addRow("Group Name:", self.group_name_input)
+
+            # Collar layer name
+            self.collar_layer_name_input = QLineEdit(default_name + " - Collars")
+            form_layout.addRow("Collar Layer Name:", self.collar_layer_name_input)
+
+            # Trace layer name
+            self.trace_layer_name_input = QLineEdit(default_name + " - Traces")
+            form_layout.addRow("Trace Layer Name:", self.trace_layer_name_input)
+        else:
+            # For holes, just layer name
+            self.layer_name_input = QLineEdit(default_name)
+            form_layout.addRow("Layer Name:", self.layer_name_input)
+
+        # Create a horizontal layout for styling controls
+        point_style_layout = QHBoxLayout()
+
+        # --- Point Color Widgets (Button with label) ---
+        # Add color label
+        point_style_layout.addWidget(QLabel("Pick Color:"))
+        # Color selection button (Already defined with its style)
+        self.color_button = QPushButton()
+        self.color_button.setMaximumSize(40, 25) 
         self.color_button.setAutoDefault(False)
-        self.selected_color = QColor(255, 0, 0)  # Default red
-        self.update_color_button_stylesheet()
+        # ... connect and style button (ensure the rounded style is applied)
+        self.selected_color = QColor(255, 0, 0)
+        self.update_color_button_stylesheet() # Make sure this applies the rounded style
         self.color_button.clicked.connect(self.select_color)
-        
+
+        point_style_layout.addWidget(self.color_button)
+
+        # --- Spacing (12 pixels) ---
+        point_style_layout.addSpacing(12)
+
+        # --- Point Size Widgets (SpinBox with label) ---
+        # Add size label
+        point_style_layout.addWidget(QLabel("Point Size:"))
+        # Point size input (Already defined)
+        self.point_size_spin = NoScrollDoubleSpinBox()
+        self.point_size_spin.setRange(1.0, 20.0)
+        self.point_size_spin.setDecimals(1)
+        self.point_size_spin.setValue(3.0)
+        self.point_size_spin.setSuffix(" px")
+        self.point_size_spin.setFocusPolicy(Qt.StrongFocus) 
+
+        point_style_layout.addWidget(self.point_size_spin)
+
+        # --- Add Stretch to Push Elements to the Left ---
+        # This line is crucial: it pushes the combined widgets to the left and fills the rest of the row.
+        point_style_layout.addStretch()
+
+        # Add the final layout to your form
+        form_layout.addRow("Point Styling:", point_style_layout)
+
+        layout.addLayout(form_layout)
+
+        # Trace range configuration section (only for assay data)
+        if self.is_assay_data:
+            # Separator
+            separator = QFrame()
+            separator.setFrameShape(QFrame.HLine)
+            separator.setFrameShadow(QFrame.Sunken)
+            layout.addWidget(separator)
+
+            # Trace range section
+            trace_group_label = QLabel("Trace Range Configuration")
+            trace_font = QFont()
+            trace_font.setBold(True)
+            trace_group_label.setFont(trace_font)
+            layout.addWidget(trace_group_label)
+
+            # Preset selector
+            preset_layout = QHBoxLayout()
+            preset_label = QLabel("Preset:")
+            preset_layout.addWidget(preset_label)
+
+            self.trace_preset_combo = QComboBox()
+            for preset_name in get_available_presets():
+                self.trace_preset_combo.addItem(preset_name)
+            self.trace_preset_combo.addItem("Custom")  # Add Custom option
+            self.trace_preset_combo.setCurrentText("Default")
+            self.trace_preset_combo.currentTextChanged.connect(self._on_preset_changed)
+            self.trace_preset_combo.setFocusPolicy(Qt.ClickFocus)  # Prevent wheel scrolling when not focused
+            preset_layout.addWidget(self.trace_preset_combo, stretch=1)
+            preset_layout.addStretch()
+
+            layout.addLayout(preset_layout)
+
+            # Trace scale visibility configuration
+            scale_layout = QHBoxLayout()
+            scale_label = QLabel("Trace Visibility Scale:")
+            scale_label.setToolTip("Map scale at which trace lines become visible.\nLower values = need to zoom in more to see traces.\nDefault: 1:50,000")
+            scale_layout.addWidget(scale_label)
+
+            self.trace_scale_spin = QDoubleSpinBox()
+            self.trace_scale_spin.setRange(1000, 500000)  # Reasonable range for map scales
+            self.trace_scale_spin.setDecimals(0)
+            self.trace_scale_spin.setValue(TRACE_SCALE_THRESHOLD)  # Default from constants
+            self.trace_scale_spin.setSuffix("")
+            self.trace_scale_spin.setPrefix("1:")
+            self.trace_scale_spin.setSingleStep(10000)
+            self.trace_scale_spin.setToolTip("Traces visible when zoomed in closer than this scale.\nExample: 1:50,000 means traces show at scales like 1:25,000, 1:10,000, etc.")
+            self.trace_scale_spin.setFocusPolicy(Qt.StrongFocus)
+            scale_layout.addWidget(self.trace_scale_spin)
+            scale_layout.addStretch()
+
+            layout.addLayout(scale_layout)
+
+            # Scroll area for range widgets
+            scroll_area = QScrollArea()
+            scroll_area.setWidgetResizable(True)
+            scroll_area.setMinimumHeight(250)
+            scroll_area.setMaximumHeight(400)
+            scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+            self.ranges_container = QWidget()
+            self.ranges_layout = QVBoxLayout(self.ranges_container)
+            self.ranges_layout.setContentsMargins(0, 0, 0, 0)
+            self.ranges_layout.setSpacing(0)
+
+            scroll_area.setWidget(self.ranges_container)
+            layout.addWidget(scroll_area)
+
+            # Add/Remove buttons (only visible when Custom selected)
+            button_layout = QHBoxLayout()
+            self.add_range_button = QPushButton("+ Add Range")
+            self.add_range_button.clicked.connect(self._add_range)
+            self.add_range_button.setVisible(False)  # Hidden by default
+            button_layout.addWidget(self.add_range_button)
+            button_layout.addStretch()
+            layout.addLayout(button_layout)
+
+            # Initialize range widgets list
+            self.range_widgets = []
+
+            # Populate initial ranges
+            self._populate_ranges()
+
         # Buttons
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        self.button_box.accepted.connect(self.accept)
+        self.button_box.accepted.connect(self._on_accept)
         self.button_box.rejected.connect(self.reject)
-        
-        # Layout
-        layout = QFormLayout(self)
-        layout.addRow("Layer Name:", self.layer_name_input)
-        layout.addRow("Point Color:", self.color_button)
         layout.addWidget(self.button_box)
+
+    def _populate_ranges(self):
+        """Populate range widgets from current configuration."""
+        # Clear existing widgets
+        for widget in self.range_widgets:
+            widget.deleteLater()
+        self.range_widgets.clear()
+
+        # Add widget for each range
+        for trace_range in self.trace_range_config.ranges:
+            self._add_range_widget(trace_range)
+
+        # Add stretch at the end
+        self.ranges_layout.addStretch()
+
+        # Update editability based on preset
+        is_custom = self.trace_preset_combo.currentText() == "Custom"
+        self._set_ranges_editable(is_custom)
+
+    def _add_range_widget(self, trace_range):
+        """Add a range widget to the layout."""
+        widget = TraceRangeWidget(trace_range)
+        widget.removed.connect(self._remove_range_widget)
+        widget.changed.connect(self._mark_as_custom)
+        self.range_widgets.append(widget)
+
+        # Insert before the stretch
+        self.ranges_layout.insertWidget(len(self.range_widgets) - 1, widget)
+
+    def _add_range(self):
+        """Add a new empty range."""
+        from ..config.trace_ranges import TraceRange, BoundaryFormula, RangeType
+        from qgis.PyQt.QtGui import QColor
+
+        # Create a default range
+        new_range = TraceRange(
+            "New Range",
+            QColor(150, 150, 150),
+            BoundaryFormula(RangeType.DIRECT_PPM, 0.0),
+            BoundaryFormula(RangeType.DIRECT_PPM, 100.0)
+        )
+        self._add_range_widget(new_range)
+
+    def _remove_range_widget(self, widget):
+        """Remove a range widget."""
+        from ..config.constants import MIN_TRACE_RANGES
+
+        if len(self.range_widgets) <= MIN_TRACE_RANGES:
+            QMessageBox.warning(
+                self,
+                "Cannot Remove Range",
+                f"You must have at least {MIN_TRACE_RANGES} ranges."
+            )
+            return
+
+        if widget in self.range_widgets:
+            self.range_widgets.remove(widget)
+            widget.deleteLater()
+
+    def _mark_as_custom(self):
+        """Mark configuration as custom when user edits."""
+        if self.trace_preset_combo.currentText() != "Custom":
+            self.trace_preset_combo.blockSignals(True)
+            self.trace_preset_combo.setCurrentText("Custom")
+            self.trace_preset_combo.blockSignals(False)
+
+    def _set_ranges_editable(self, editable):
+        """Enable/disable editing of range widgets."""
+        for widget in self.range_widgets:
+            widget.setEnabled(editable)
+
+        # Show/hide add button
+        if hasattr(self, 'add_range_button'):
+            self.add_range_button.setVisible(editable)
+
+    def _on_preset_changed(self, preset_name):
+        """Handle preset selection change."""
+        from ..config.trace_ranges import get_preset_by_name, get_industry_standard_preset, TraceRange
+
+        if preset_name == "Custom":
+            # Load Default as template with generic "Range N" names
+            industry_config = get_industry_standard_preset()
+            custom_ranges = []
+            for idx, preset_range in enumerate(industry_config.ranges, start=1):
+                custom_range = TraceRange(
+                    name=f"Range {idx}",
+                    color=preset_range.color,
+                    lower_boundary=preset_range.lower_boundary,
+                    upper_boundary=preset_range.upper_boundary
+                )
+                custom_ranges.append(custom_range)
+
+            # Update config with custom ranges
+            from ..config.trace_ranges import TraceRangeConfiguration
+            self.trace_range_config = TraceRangeConfiguration(custom_ranges, "Custom")
+            self._populate_ranges()
+        else:
+            # Load preset configuration
+            self.trace_range_config = get_preset_by_name(preset_name)
+            self._populate_ranges()
+
+    def _on_accept(self):
+        """Validate and accept the configuration."""
+        if self.is_assay_data:
+            # Get all ranges from widgets
+            ranges = [widget.get_trace_range() for widget in self.range_widgets]
+
+            # Validate minimum number of ranges
+            if len(ranges) < 2:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Configuration",
+                    "You must define at least 2 ranges."
+                )
+                return
+
+            # Validate range configuration
+            validation_result = self._validate_ranges(ranges)
+            if not validation_result['valid']:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Range Configuration",
+                    validation_result['message']
+                )
+                return
+
+            # Update configuration
+            from ..config.trace_ranges import TraceRangeConfiguration
+            self.trace_range_config = TraceRangeConfiguration(
+                ranges,
+                self.trace_preset_combo.currentText()
+            )
+
+        self.accept()
+
+    def _validate_ranges(self, ranges):
+        """
+        Validate trace range configuration.
+
+        Checks for:
+        - Empty range names
+        - Duplicate range names
+        - Logical consistency (lower < upper for direct PPM values)
+
+        Args:
+            ranges: List of TraceRange objects
+
+        Returns:
+            Dictionary with 'valid' (bool) and 'message' (str) keys
+        """
+        from ..config.trace_ranges import RangeType
+
+        # Check for empty names
+        for i, r in enumerate(ranges):
+            if not r.name or r.name.strip() == "" or r.name == "Unnamed Range":
+                return {
+                    'valid': False,
+                    'message': f"Range {i + 1} has no name. Please provide a name for all ranges."
+                }
+
+        # Check for duplicate names
+        names = [r.name for r in ranges]
+        if len(names) != len(set(names)):
+            duplicates = [name for name in names if names.count(name) > 1]
+            return {
+                'valid': False,
+                'message': f"Duplicate range names found: {', '.join(set(duplicates))}. Each range must have a unique name."
+            }
+
+        # Check logical consistency for direct PPM ranges
+        for i, r in enumerate(ranges):
+            # If both boundaries are direct PPM values, verify lower < upper
+            if (r.lower_boundary.formula_type == RangeType.DIRECT_PPM and
+                r.upper_boundary.formula_type == RangeType.DIRECT_PPM):
+                if r.lower_boundary.value >= r.upper_boundary.value:
+                    return {
+                        'valid': False,
+                        'message': f"Range '{r.name}': Lower boundary ({r.lower_boundary.value}) must be less than upper boundary ({r.upper_boundary.value})."
+                    }
+
+        return {'valid': True, 'message': ''}
 
     def select_color(self):
         """Open color picker dialog."""
@@ -986,12 +1338,36 @@ class LayerOptionsDialog(QDialog):
                 border: 2px solid #333;
                 padding: 8px;
                 font-weight: bold;
+                border-radius: 10px; 
+            }}
+            QPushButton:hover {{
+                cursor:pointer
             }}
         """)
 
     def get_options(self):
-        """Get the configured options."""
-        return self.layer_name_input.text(), self.selected_color
+        """Get the configured options.
+
+        Returns:
+            For assay data: (group_name, collar_layer_name, trace_layer_name, point_size, color, trace_config, trace_scale)
+            For holes: (layer_name, point_size, color)
+        """
+        if self.is_assay_data:
+            return (
+                self.group_name_input.text(),
+                self.collar_layer_name_input.text(),
+                self.trace_layer_name_input.text(),
+                self.point_size_spin.value(),
+                self.selected_color,
+                self.trace_range_config,
+                self.trace_scale_spin.value()
+            )
+        else:
+            return (
+                self.layer_name_input.text(),
+                self.point_size_spin.value(),
+                self.selected_color
+            )
 
 class LargeImportWarningDialog(QDialog):
     """Dialog to warn users about large dataset imports."""
@@ -1001,19 +1377,18 @@ class LargeImportWarningDialog(QDialog):
     IMPORT_PARTIAL = 2
     CANCEL = 0
     
-    def __init__(self, record_count: int, is_location_only: bool = False, parent=None):
+    def __init__(self, record_count: int, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Large Dataset Import Warning")
         self.setModal(True)
         self.setMinimumWidth(450)
 
         self.record_count = record_count
-        self.is_location_only = is_location_only
         self.user_choice = self.CANCEL
 
-        # Use appropriate limits based on data type
-        self.max_safe_import = MAX_SAFE_IMPORT_LOCATION_ONLY if is_location_only else MAX_SAFE_IMPORT
-        self.partial_limit = PARTIAL_IMPORT_LIMIT_LOCATION_ONLY if is_location_only else PARTIAL_IMPORT_LIMIT
+        # Use standard limits
+        self.max_safe_import = MAX_SAFE_IMPORT
+        self.partial_limit = PARTIAL_IMPORT_LIMIT
         
         # Main layout
         layout = QVBoxLayout(self)
@@ -1164,3 +1539,757 @@ class ImportProgressDialog(QProgressDialog):
         
         self.setCancelButtonText("Close")
         self.setValue(self.maximum())  # Set to 100%
+
+
+class FetchDetailsDialog(QDialog):
+    """Dialog to show detailed information about fetched records."""
+
+    def __init__(self, fetch_info: dict, parent=None):
+        """
+        Initialize the fetch details dialog.
+
+        Args:
+            fetch_info: Dictionary containing:
+                - total_fetched: Number of records fetched
+                - requested_count: Number of records requested
+                - fetch_time: Time taken to fetch in seconds
+                - state_contributions: Dict of state -> count
+                - data_type: 'Holes' or 'Assays'
+        """
+        super().__init__(parent)
+        self.fetch_info = fetch_info
+        self._setup_ui()
+
+    def _setup_ui(self):
+        """Setup the dialog UI."""
+        self.setWindowTitle("Fetch Details")
+        self.setMinimumSize(500, 400)
+
+        layout = QVBoxLayout(self)
+
+        # Summary section
+        summary_label = QLabel("Fetch Summary")
+        summary_font = QFont()
+        summary_font.setBold(True)
+        summary_font.setPointSize(12)
+        summary_label.setFont(summary_font)
+        layout.addWidget(summary_label)
+
+        # Add separator
+        separator1 = QFrame()
+        separator1.setFrameShape(QFrame.HLine)
+        separator1.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator1)
+
+        # Summary info
+        total_fetched = self.fetch_info.get('total_fetched', 0)
+        requested_count = self.fetch_info.get('requested_count', 0)
+        fetch_time = self.fetch_info.get('fetch_time', 0)
+        data_type = self.fetch_info.get('data_type', 'Records')
+
+        summary_text = f"<b>Data Type:</b> {data_type}<br>"
+        summary_text += f"<b>Records Fetched:</b> {total_fetched:,}<br>"
+        summary_text += f"<b>Records Requested:</b> {requested_count:,}<br>"
+        summary_text += f"<b>Time Taken:</b> {fetch_time:.1f} seconds"
+
+        summary_info = QLabel(summary_text)
+        summary_info.setTextFormat(Qt.RichText)
+        summary_info.setWordWrap(True)
+        summary_info.setStyleSheet("padding: 10px; background-color: #f0f0f0; border-radius: 5px; color: #333333;")
+        layout.addWidget(summary_info)
+
+        # Show message if fetched < requested
+        if total_fetched < requested_count:
+            availability_msg = QLabel(
+                f"ℹ️ Only {total_fetched:,} records are available in our database for the selected filters. "
+                f"This is the complete dataset matching your criteria."
+            )
+            availability_msg.setWordWrap(True)
+            availability_msg.setStyleSheet(
+                "padding: 10px; background-color: #fff3cd; border: 1px solid #ffc107; "
+                "border-radius: 5px; color: #856404; margin-top: 10px;"
+            )
+            layout.addWidget(availability_msg)
+
+        layout.addSpacing(20)
+
+        # State contributions section
+        state_label = QLabel("State-wise Distribution")
+        state_font = QFont()
+        state_font.setBold(True)
+        state_font.setPointSize(12)
+        state_label.setFont(state_font)
+        layout.addWidget(state_label)
+
+        # Add separator
+        separator2 = QFrame()
+        separator2.setFrameShape(QFrame.HLine)
+        separator2.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator2)
+
+        # State contributions table
+        state_contributions = self.fetch_info.get('state_contributions', {})
+
+        if state_contributions:
+            table = QTableWidget()
+            table.setColumnCount(3)
+            table.setHorizontalHeaderLabels(["State", "Records", "Percentage"])
+            table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+            table.setEditTriggers(QTableWidget.NoEditTriggers)
+            table.setSelectionBehavior(QTableWidget.SelectRows)
+
+            # Sort states by record count (descending)
+            sorted_states = sorted(
+                state_contributions.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )
+
+            table.setRowCount(len(sorted_states))
+
+            for row, (state, count) in enumerate(sorted_states):
+                # State name
+                state_item = QTableWidgetItem(state if state else "Unknown")
+                table.setItem(row, 0, state_item)
+
+                # Record count
+                count_item = QTableWidgetItem(f"{count:,}")
+                count_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                table.setItem(row, 1, count_item)
+
+                # Percentage
+                percentage = (count / total_fetched * 100) if total_fetched > 0 else 0
+                percentage_item = QTableWidgetItem(f"{percentage:.1f}%")
+                percentage_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                table.setItem(row, 2, percentage_item)
+
+            layout.addWidget(table)
+        else:
+            no_data_label = QLabel("No state-wise distribution data available.")
+            no_data_label.setAlignment(Qt.AlignCenter)
+            no_data_label.setStyleSheet("color: #666; font-style: italic; padding: 20px;")
+            layout.addWidget(no_data_label)
+
+        # Close button
+        button_box = QDialogButtonBox(QDialogButtonBox.Close)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+
+class BoundingBoxRectangleTool(QgsMapTool):
+    """Custom map tool for drawing bounding box rectangles by click and drag."""
+
+    rectangle_created = pyqtSignal(QgsRectangle)
+
+    def __init__(self, canvas):
+        super().__init__(canvas)
+        self.canvas = canvas
+        self.rubberBand = None
+        self.startPoint = None
+        self.endPoint = None
+        self.isDrawing = False
+
+        # Create rubber band for visual feedback
+        self.rubberBand = QgsRubberBand(self.canvas, QgsWkbTypes.PolygonGeometry)
+        self.rubberBand.setColor(QColor(255, 0, 0, 100))  # Semi-transparent red
+        self.rubberBand.setWidth(2)
+        self.rubberBand.setLineStyle(Qt.DashLine)
+
+    def canvasPressEvent(self, event):
+        """Handle mouse press - start drawing rectangle."""
+        if event.button() == Qt.LeftButton:
+            self.startPoint = self.toMapCoordinates(event.pos())
+            self.endPoint = self.startPoint
+            self.isDrawing = True
+            self.rubberBand.reset(QgsWkbTypes.PolygonGeometry)
+
+    def canvasMoveEvent(self, event):
+        """Handle mouse move - update rectangle preview."""
+        if not self.isDrawing:
+            return
+
+        self.endPoint = self.toMapCoordinates(event.pos())
+        self._updateRubberBand()
+
+    def canvasReleaseEvent(self, event):
+        """Handle mouse release - finalize rectangle."""
+        if event.button() == Qt.LeftButton and self.isDrawing:
+            self.endPoint = self.toMapCoordinates(event.pos())
+            self.isDrawing = False
+
+            # Create rectangle and emit signal
+            rect = QgsRectangle(self.startPoint, self.endPoint)
+            if not rect.isEmpty():
+                self.rectangle_created.emit(rect)
+
+    def _updateRubberBand(self):
+        """Update rubber band to show current rectangle."""
+        if self.startPoint is None or self.endPoint is None:
+            return
+
+        # Create rectangle points
+        rect = QgsRectangle(self.startPoint, self.endPoint)
+        points = [
+            QgsPointXY(rect.xMinimum(), rect.yMinimum()),
+            QgsPointXY(rect.xMaximum(), rect.yMinimum()),
+            QgsPointXY(rect.xMaximum(), rect.yMaximum()),
+            QgsPointXY(rect.xMinimum(), rect.yMaximum()),
+            QgsPointXY(rect.xMinimum(), rect.yMinimum())  # Close the rectangle
+        ]
+
+        self.rubberBand.reset(QgsWkbTypes.PolygonGeometry)
+        for point in points:
+            self.rubberBand.addPoint(point, True)
+        self.rubberBand.show()
+
+    def reset(self):
+        """Reset the tool."""
+        self.startPoint = None
+        self.endPoint = None
+        self.isDrawing = False
+        if self.rubberBand:
+            self.rubberBand.reset(QgsWkbTypes.PolygonGeometry)
+
+    def deactivate(self):
+        """Clean up when tool is deactivated."""
+        super().deactivate()
+        if self.rubberBand:
+            self.rubberBand.reset(QgsWkbTypes.PolygonGeometry)
+
+
+class PolygonSelectionDialog(QDialog):
+    """Interactive map dialog for selecting a polygon over Australia."""
+
+    def __init__(self, parent=None, existing_polygon=None):
+        """
+        Initialize the polygon selection map dialog.
+
+        Args:
+            parent: Parent widget
+            existing_polygon: Existing polygon dict with key 'coords': [(lat, lon), ...]
+        """
+        super().__init__(parent)
+        self.selected_polygon = existing_polygon
+        self._setup_ui()
+        self._setup_map()
+
+        # If there's an existing bounding box, show it on the map
+        if existing_polygon:
+            self._show_existing_bbox(existing_polygon)
+
+        # Trigger a delayed refresh to ensure basemap renders
+        QTimer.singleShot(100, self._delayed_refresh)
+
+    def _setup_ui(self):
+        """Setup the dialog UI."""
+        self.setWindowTitle("Select Geographic Area - Draw Bounding Box")
+        self.setMinimumSize(900, 700)
+
+        layout = QVBoxLayout(self)
+
+        # Header with instructions
+        header_label = QLabel("🗺️ Draw a Bounding Box on the Map")
+        header_font = QFont()
+        header_font.setBold(True)
+        header_font.setPointSize(14)
+        header_label.setFont(header_font)
+        header_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(header_label)
+
+        # Instructions
+        instructions = QLabel(
+            "• Click and drag to draw a rectangular bounding box\n"
+            "• Use Pan and Zoom tools to navigate the map\n"
+            "• Your selection will filter data within the box boundaries"
+        )
+        instructions.setStyleSheet("padding: 10px; background-color: #e3f2fd; border-radius: 5px; color: #1976d2;")
+        instructions.setWordWrap(True)
+        layout.addWidget(instructions)
+
+        # Map toolbar
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.setSpacing(10)
+
+        # Tool buttons
+        self.pan_button = QPushButton("🖐️ Pan")
+        self.pan_button.setCheckable(True)
+        self.pan_button.setToolTip("Pan the map")
+        self.pan_button.clicked.connect(self._activate_pan_tool)
+
+        self.zoom_in_button = QPushButton("🔍 Zoom In")
+        self.zoom_in_button.setCheckable(True)
+        self.zoom_in_button.setToolTip("Zoom in to the map")
+        self.zoom_in_button.clicked.connect(self._activate_zoom_in_tool)
+
+        self.zoom_out_button = QPushButton("🔍 Zoom Out")
+        self.zoom_out_button.setCheckable(True)
+        self.zoom_out_button.setToolTip("Zoom out from the map")
+        self.zoom_out_button.clicked.connect(self._activate_zoom_out_tool)
+
+        self.draw_button = QPushButton("📐 Draw Box")
+        self.draw_button.setCheckable(True)
+        self.draw_button.setChecked(True)  # Default tool
+        self.draw_button.setToolTip("Draw a bounding box")
+        self.draw_button.clicked.connect(self._activate_draw_tool)
+
+        self.reset_view_button = QPushButton("🌏 Reset View")
+        self.reset_view_button.setToolTip("Reset to Australia view")
+        self.reset_view_button.clicked.connect(self._reset_map_view)
+
+        self.clear_box_button = QPushButton("🗑️ Clear Box")
+        self.clear_box_button.setToolTip("Clear the current bounding box")
+        self.clear_box_button.clicked.connect(self._clear_bbox)
+
+        toolbar_layout.addWidget(self.pan_button)
+        toolbar_layout.addWidget(self.zoom_in_button)
+        toolbar_layout.addWidget(self.zoom_out_button)
+        toolbar_layout.addWidget(self.draw_button)
+        toolbar_layout.addWidget(self.reset_view_button)
+        toolbar_layout.addWidget(self.clear_box_button)
+        toolbar_layout.addStretch()
+
+        layout.addLayout(toolbar_layout)
+
+        # Map canvas
+        self.map_canvas = QgsMapCanvas()
+        self.map_canvas.setMinimumSize(800, 500)
+        layout.addWidget(self.map_canvas)
+
+        # Coordinates display
+        self.coords_label = QLabel("No bounding box selected - Click and drag to draw")
+        self.coords_label.setStyleSheet(
+            "padding: 10px; background-color: #f5f5f5; border: 1px solid #ddd; "
+            "border-radius: 5px; font-family: monospace; color: #333;"
+        )
+        self.coords_label.setWordWrap(True)
+        layout.addWidget(self.coords_label)
+
+        # Dialog buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self._on_accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def _setup_map(self):
+        """Setup the map canvas with Australia-centered view and basemap."""
+        from qgis.core import (
+            QgsCoordinateReferenceSystem,
+            QgsCoordinateTransform,
+            QgsProject,
+            QgsRasterLayer,
+            QgsRectangle
+        )
+
+        # Use Web Mercator (EPSG:3857)
+        crs = QgsCoordinateReferenceSystem("EPSG:3857")
+        self.map_canvas.setDestinationCrs(crs)
+        self.map_canvas.setCanvasColor(QColor(255, 255, 255))
+        self.map_canvas.enableAntiAliasing(True)
+
+        # ✅ FIX 1: Use provider "xyz" (not "wms")
+        # basemap_url = "type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+        basemap_layer = QgsRasterLayer(OSM_LAYER_URL, OSM_LAYER_NAME, "wms")
+
+        if basemap_layer.isValid():
+            # ✅ FIX 2: Add to project before setting canvas layers
+            QgsProject.instance().addMapLayer(basemap_layer, addToLegend=False)
+            self.map_canvas.setLayers([basemap_layer])
+            log_info("OpenStreetMap basemap loaded successfully")
+        else:
+            log_warning("Failed to load OpenStreetMap basemap - using blank canvas")
+
+        # ✅ FIX 3: Reset extent to valid area (Australia)
+        transform = QgsCoordinateTransform(
+            QgsCoordinateReferenceSystem("EPSG:4326"),
+            crs,
+            QgsProject.instance()
+        )
+
+        australia_extent_4326 = QgsRectangle(113, -44, 154, -10)
+        australia_extent = transform.transformBoundingBox(australia_extent_4326)
+        self.map_canvas.setExtent(australia_extent)
+
+        # ✅ FIX 4: Unfreeze and refresh *after* extent and layers set
+        self.map_canvas.freeze(False)
+        self.map_canvas.setRenderFlag(True)
+        self.map_canvas.refresh()
+        self.map_canvas.refreshAllLayers()
+
+        # ✅ Tools and rubber bands
+        self.pan_tool = QgsMapToolPan(self.map_canvas)
+        self.zoom_in_tool = QgsMapToolZoom(self.map_canvas, False)
+        self.zoom_out_tool = QgsMapToolZoom(self.map_canvas, True)
+        self.draw_tool = BoundingBoxRectangleTool(self.map_canvas)
+        self.draw_tool.rectangle_created.connect(self._on_rectangle_created)
+
+        self.bbox_rubber_band = QgsRubberBand(self.map_canvas, QgsWkbTypes.PolygonGeometry)
+        self.bbox_rubber_band.setColor(QColor(0, 120, 255, 80))
+        self.bbox_rubber_band.setWidth(3)
+
+        # ✅ Activate draw tool and refresh again after short delay
+        self._activate_draw_tool()
+        QTimer.singleShot(200, self.map_canvas.refreshAllLayers)
+
+
+    def _show_existing_bbox(self, bbox):
+        """Show existing bounding box on map."""
+        coords = bbox.get('coords', [])
+        if coords and len(coords) == 4:
+            # Coords are 4 corners: [bottom-left, bottom-right, top-right, top-left]
+            # Extract min/max lat/lon
+            lats = [lat for lat, lon in coords]
+            lons = [lon for lat, lon in coords]
+            rect_4326 = QgsRectangle(min(lons), min(lats), max(lons), max(lats))
+
+            # Convert to map CRS (Web Mercator)
+            from qgis.core import QgsCoordinateTransform, QgsProject
+            transform = QgsCoordinateTransform(
+                QgsCoordinateReferenceSystem("EPSG:4326"),
+                self.map_canvas.mapSettings().destinationCrs(),
+                QgsProject.instance()
+            )
+            rect = transform.transformBoundingBox(rect_4326)
+            self._update_bbox_display(rect)
+
+    def _activate_pan_tool(self):
+        """Activate pan tool."""
+        self._uncheck_all_tool_buttons()
+        self.pan_button.setChecked(True)
+        self.map_canvas.setMapTool(self.pan_tool)
+
+    def _activate_zoom_in_tool(self):
+        """Activate zoom in tool."""
+        self._uncheck_all_tool_buttons()
+        self.zoom_in_button.setChecked(True)
+        self.map_canvas.setMapTool(self.zoom_in_tool)
+
+    def _activate_zoom_out_tool(self):
+        """Activate zoom out tool."""
+        self._uncheck_all_tool_buttons()
+        self.zoom_out_button.setChecked(True)
+        self.map_canvas.setMapTool(self.zoom_out_tool)
+
+    def _activate_draw_tool(self):
+        """Activate draw tool."""
+        self._uncheck_all_tool_buttons()
+        self.draw_button.setChecked(True)
+        self.map_canvas.setMapTool(self.draw_tool)
+
+    def _uncheck_all_tool_buttons(self):
+        """Uncheck all tool buttons."""
+        self.pan_button.setChecked(False)
+        self.zoom_in_button.setChecked(False)
+        self.zoom_out_button.setChecked(False)
+        self.draw_button.setChecked(False)
+
+    def _reset_map_view(self):
+        """Reset map view to Australia."""
+        # Convert WGS84 bounds to Web Mercator
+        from qgis.core import QgsCoordinateTransform, QgsProject
+        transform = QgsCoordinateTransform(
+            QgsCoordinateReferenceSystem("EPSG:4326"),
+            self.map_canvas.mapSettings().destinationCrs(),
+            QgsProject.instance()
+        )
+        australia_extent_4326 = QgsRectangle(113, -44, 154, -10)
+        australia_extent = transform.transformBoundingBox(australia_extent_4326)
+        self.map_canvas.setExtent(australia_extent)
+        self.map_canvas.refresh()
+
+    def _clear_bbox(self):
+        """Clear the current bounding box."""
+        self.selected_polygon = None
+        self.bbox_rubber_band.reset(QgsWkbTypes.PolygonGeometry)
+        self.coords_label.setText("No bounding box selected - Click and drag to draw")
+        self.draw_tool.reset()
+
+    def _on_rectangle_created(self, rect):
+        """Handle rectangle creation from draw tool."""
+        self._update_bbox_display(rect)
+
+    def _update_bbox_display(self, rect):
+        """Update the bounding box display on map and in UI."""
+        # Convert rectangle from map CRS to WGS84 for storage
+        from qgis.core import QgsCoordinateTransform, QgsProject
+        transform = QgsCoordinateTransform(
+            self.map_canvas.mapSettings().destinationCrs(),
+            QgsCoordinateReferenceSystem("EPSG:4326"),
+            QgsProject.instance()
+        )
+        rect_4326 = transform.transformBoundingBox(rect)
+
+        # Store as 4 corner coordinates (bottom-left, bottom-right, top-right, top-left) in lat,lon format
+        coords = [
+            (rect_4326.yMinimum(), rect_4326.xMinimum()),  # Bottom-left
+            (rect_4326.yMinimum(), rect_4326.xMaximum()),  # Bottom-right
+            (rect_4326.yMaximum(), rect_4326.xMaximum()),  # Top-right
+            (rect_4326.yMaximum(), rect_4326.xMinimum())   # Top-left
+        ]
+
+        self.selected_polygon = {
+            'coords': coords
+        }
+
+        # Update rubber band display (in map CRS)
+        points = [
+            QgsPointXY(rect.xMinimum(), rect.yMinimum()),
+            QgsPointXY(rect.xMaximum(), rect.yMinimum()),
+            QgsPointXY(rect.xMaximum(), rect.yMaximum()),
+            QgsPointXY(rect.xMinimum(), rect.yMaximum()),
+            QgsPointXY(rect.xMinimum(), rect.yMinimum())
+        ]
+
+        self.bbox_rubber_band.reset(QgsWkbTypes.PolygonGeometry)
+        for point in points:
+            self.bbox_rubber_band.addPoint(point, True)
+        self.bbox_rubber_band.show()
+
+        # Update coordinates label
+        self.coords_label.setText(
+            f"✓ Bounding Box Selected:\n"
+            f"Latitude: {rect_4326.yMinimum():.4f}° to {rect_4326.yMaximum():.4f}° | "
+            f"Longitude: {rect_4326.xMinimum():.4f}° to {rect_4326.xMaximum():.4f}°"
+        )
+
+    def _on_accept(self):
+        """Handle OK button click."""
+        if self.selected_polygon is None:
+            QMessageBox.warning(
+                self,
+                "No Bounding Box Selected",
+                "Please draw a bounding box on the map before clicking OK.\nClick and drag to draw a rectangle."
+            )
+            return
+
+        self.accept()
+
+    def get_polygon(self):
+        """Get the selected bounding box coordinates as 4 corners."""
+        return self.selected_polygon
+
+    def _delayed_refresh(self):
+        """Delayed refresh to ensure basemap tiles load properly."""
+        self.map_canvas.refresh()
+        self.map_canvas.refreshAllLayers()
+
+
+class TraceRangeWidget(QWidget):
+    """Widget for configuring a single trace range with name, color, and boundaries."""
+
+    removed = pyqtSignal(object)  # Emits self when remove button clicked
+    changed = pyqtSignal()  # Emits when any value changes
+
+    def __init__(self, trace_range=None, parent=None):
+        """
+        Initialize trace range widget.
+
+        Args:
+            trace_range: TraceRange object to initialize with (optional)
+            parent: Parent widget
+        """
+        super().__init__(parent)
+        from ..config.trace_ranges import TraceRange, BoundaryFormula, RangeType
+
+        self.trace_range = trace_range
+        self._setup_ui()
+
+        # Populate from trace_range if provided
+        if trace_range:
+            self._populate_from_trace_range(trace_range)
+
+    def _setup_ui(self):
+        """Setup the widget UI."""
+        from ..config.trace_ranges import RangeType
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        # Top row: Name and color
+        top_row = QHBoxLayout()
+
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("Range name")
+        self.name_input.textChanged.connect(self.changed.emit)
+        top_row.addWidget(self.name_input, stretch=3)
+
+        self.color_button = QPushButton("Color")
+        self.color_button.setFixedWidth(60)
+        self.color_button.setDefault(False)
+        self.color_button.setAutoDefault(False)
+        self.selected_color = QColor(100, 181, 246)  # Default blue
+        self._update_color_button()
+        self.color_button.clicked.connect(self._select_color)
+        top_row.addWidget(self.color_button)
+
+        self.remove_button = QPushButton("×")
+        self.remove_button.setFixedSize(20, 20)
+        self.remove_button.setDefault(False)
+        self.remove_button.setAutoDefault(False)
+        self.remove_button.setToolTip("Remove this range")
+        self.remove_button.setStyleSheet("""
+            QPushButton {
+                font-weight: bold;
+                font-size: 16px;
+                border-radius: 10px;
+                border: 1px solid #ccc;
+                background-color: #f0f0f0;
+            }
+            QPushButton:hover {
+                background-color: #ffcccc;
+                border-color: #ff0000;
+            }
+        """)
+        self.remove_button.clicked.connect(lambda: self.removed.emit(self))
+        top_row.addWidget(self.remove_button)
+
+        layout.addLayout(top_row)
+
+        # Lower boundary row
+        lower_row = QHBoxLayout()
+        lower_label = QLabel("Lower:")
+        lower_label.setFixedWidth(50)
+        lower_row.addWidget(lower_label)
+
+        self.lower_type_combo = NoScrollComboBox()
+        for range_type in RangeType:
+            self.lower_type_combo.addItem(range_type.value, range_type)
+        self.lower_type_combo.currentIndexChanged.connect(self.changed.emit)
+        self.lower_type_combo.setFocusPolicy(Qt.ClickFocus)  # Prevent wheel scrolling when not focused
+        lower_row.addWidget(self.lower_type_combo, stretch=2)
+
+        self.lower_value_spin = NoScrollDoubleSpinBox()
+        self.lower_value_spin.setRange(-1000000.0, 1000000.0)
+        self.lower_value_spin.setDecimals(2)
+        self.lower_value_spin.setValue(0.0)
+        self.lower_value_spin.valueChanged.connect(self.changed.emit)
+        self.lower_value_spin.setFocusPolicy(Qt.ClickFocus)  # Prevent wheel scrolling when not focused
+        lower_row.addWidget(self.lower_value_spin, stretch=1)
+
+        layout.addLayout(lower_row)
+
+        # Upper boundary row
+        upper_row = QHBoxLayout()
+        upper_label = QLabel("Upper:")
+        upper_label.setFixedWidth(50)
+        upper_row.addWidget(upper_label)
+
+        self.upper_type_combo = NoScrollComboBox()
+        for range_type in RangeType:
+            self.upper_type_combo.addItem(range_type.value, range_type)
+        self.upper_type_combo.currentIndexChanged.connect(self.changed.emit)
+        self.upper_type_combo.setFocusPolicy(Qt.ClickFocus)  # Prevent wheel scrolling when not focused
+        upper_row.addWidget(self.upper_type_combo, stretch=2)
+
+        self.upper_value_spin = NoScrollDoubleSpinBox()
+        self.upper_value_spin.setRange(-1000000.0, 1000000.0)
+        self.upper_value_spin.setDecimals(2)
+        self.upper_value_spin.setValue(1.0)
+        self.upper_value_spin.valueChanged.connect(self.changed.emit)
+        self.upper_value_spin.setFocusPolicy(Qt.ClickFocus)  # Prevent wheel scrolling when not focused
+        upper_row.addWidget(self.upper_value_spin, stretch=1)
+
+        layout.addLayout(upper_row)
+
+        # Separator
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        layout.addWidget(separator)
+
+    def _select_color(self):
+        """Open color picker dialog."""
+        color = QColorDialog.getColor(self.selected_color, self, "Choose Range Color")
+        if color.isValid():
+            self.selected_color = color
+            self._update_color_button()
+            self.changed.emit()
+
+    def _update_color_button(self):
+        """Update color button appearance."""
+        self.color_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.selected_color.name()};
+                border: 2px solid #333;
+                padding: 4px;
+                font-weight: bold;
+            }}
+        """)
+
+    def _populate_from_trace_range(self, trace_range):
+        """Populate widget from TraceRange object."""
+        self.name_input.setText(trace_range.name)
+        self.selected_color = trace_range.color
+        self._update_color_button()
+
+        # Set lower boundary
+        lower_idx = self.lower_type_combo.findData(trace_range.lower_boundary.formula_type)
+        if lower_idx >= 0:
+            self.lower_type_combo.setCurrentIndex(lower_idx)
+        self.lower_value_spin.setValue(trace_range.lower_boundary.value)
+
+        # Set upper boundary
+        upper_idx = self.upper_type_combo.findData(trace_range.upper_boundary.formula_type)
+        if upper_idx >= 0:
+            self.upper_type_combo.setCurrentIndex(upper_idx)
+        self.upper_value_spin.setValue(trace_range.upper_boundary.value)
+
+    def get_trace_range(self):
+        """Get TraceRange object from widget values."""
+        from ..config.trace_ranges import TraceRange, BoundaryFormula
+
+        name = self.name_input.text().strip() or "Unnamed Range"
+
+        lower_type = self.lower_type_combo.currentData()
+        lower_value = self.lower_value_spin.value()
+        lower_boundary = BoundaryFormula(lower_type, lower_value)
+
+        upper_type = self.upper_type_combo.currentData()
+        upper_value = self.upper_value_spin.value()
+        upper_boundary = BoundaryFormula(upper_type, upper_value)
+
+        return TraceRange(name, self.selected_color, lower_boundary, upper_boundary)
+
+
+class NoScrollDoubleSpinBox(QDoubleSpinBox):
+    """
+    A custom QDoubleSpinBox that ignores the mouse wheel event
+    unless the widget is currently focused (i.e., clicked on or tabbed into).
+    This prevents accidental value changes when scrolling the dialog.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Setting focus policy to StrongFocus is a good practice, but not always enough
+        self.setFocusPolicy(Qt.StrongFocus) 
+
+    def wheelEvent(self, event):
+        # Check if the widget has focus.
+        if self.hasFocus():
+            # If focused, process the wheel event (change the value).
+            super().wheelEvent(event)
+        else:
+            # If not focused (user is likely scrolling the parent dialog), 
+            # ignore the event so it propagates up to the parent widget.
+            event.ignore()
+
+class NoScrollComboBox(QComboBox):
+    """
+    A custom QComboBox that ignores the mouse wheel event
+    unless the dropdown list is currently visible (open).
+    This prevents accidental selection changes when scrolling the dialog.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Set focus policy to prevent gaining focus on wheel, 
+        # though the wheelEvent override is the main fix.
+        self.setFocusPolicy(Qt.StrongFocus) 
+
+    def wheelEvent(self, event):
+        # Check if the combo box's list is currently visible (open).
+        if self.view().isVisible():
+            # If the list is open, process the wheel event (change selection).
+            super().wheelEvent(event)
+        else:
+            # If the list is NOT open (user is likely scrolling the parent dialog), 
+            # ignore the event so it propagates up to the parent widget.
+            event.ignore()
