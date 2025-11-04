@@ -284,10 +284,20 @@ class DataImporter:
             # Check if user was actually authenticated before logout
             was_authenticated = self.data_manager.api_client.is_authenticated()
 
+            # Logout from API client (clears tokens, stops timer)
             self.data_manager.api_client.logout()
+
+            # Update UI login status
             self.dlg.update_login_status(False)
 
-            # Clear any existing data
+            # Reset all filters in the UI
+            self.dlg._reset_all_filters()
+
+            # Clear DataManager tab data completely (filters, cached data)
+            self.data_manager.clear_tab_data("Holes")
+            self.data_manager.clear_tab_data("Assays")
+
+            # Clear table display
             self.dlg.show_data("Holes", [], [], {'has_data': False, 'current_page': 0, 'total_pages': 0, 'showing_records': 0, 'total_records': 0, 'records_per_page': 100})
             self.dlg.show_data("Assays", [], [], {'has_data': False, 'current_page': 0, 'total_pages': 0, 'showing_records': 0, 'total_records': 0, 'records_per_page': 100})
 
