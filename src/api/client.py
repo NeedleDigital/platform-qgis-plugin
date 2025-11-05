@@ -479,20 +479,31 @@ class ApiClient(QObject):
 
     def cancel_streaming_request(self, reply: Optional[QNetworkReply]) -> None:
         """Cancel an active streaming request."""
-        if reply and reply in self._active_replies:
+        if not reply:
+            return
+
+        # Abort the reply if it's still active
+        if not reply.isFinished():
             reply.abort()
-            self._active_replies.remove(reply)
 
-            # Cleanup buffers and tracking
-            reply_id = id(reply)
-            if reply_id in self._streaming_buffers:
-                del self._streaming_buffers[reply_id]
-            if reply_id in self._streaming_text_buffers:
-                del self._streaming_text_buffers[reply_id]
-            if reply_id in self._streaming_decompressors:
-                del self._streaming_decompressors[reply_id]
+        # Remove from active replies list (use try/except to handle race conditions)
+        try:
+            if reply in self._active_replies:
+                self._active_replies.remove(reply)
+        except (ValueError, RuntimeError):
+            # Reply was already removed or list was modified - this is okay
+            pass
 
-            log_warning("Streaming request cancelled by user")
+        # Cleanup buffers and tracking
+        reply_id = id(reply)
+        if reply_id in self._streaming_buffers:
+            del self._streaming_buffers[reply_id]
+        if reply_id in self._streaming_text_buffers:
+            del self._streaming_text_buffers[reply_id]
+        if reply_id in self._streaming_decompressors:
+            del self._streaming_decompressors[reply_id]
+
+        log_warning("Streaming request cancelled by user")
     
     def _make_request(self, url: str, method: str = "GET", data: Optional[Dict] = None, 
                      params: Optional[Dict] = None, headers: Optional[Dict] = None,

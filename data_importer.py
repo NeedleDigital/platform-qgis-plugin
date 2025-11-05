@@ -387,6 +387,9 @@ class DataImporter:
     def _handle_login_required(self):
         """Handle login required signal - show login dialog directly."""
         try:
+            # Hide cancel button since no API request is in progress
+            self.dlg.hide_cancel_button()
+
             # Ensure user is logged out first
             self._handle_logout_request()
 
@@ -402,9 +405,13 @@ class DataImporter:
     def _handle_data_fetch_request(self, tab_name, params, fetch_all):
         """Handle data fetch request."""
         try:
-            self.dlg.show_cancel_button()  # Show cancel button when starting fetch
+            # Only show cancel button if user is authenticated
+            # If not authenticated, login_required signal will be emitted and login dialog will show
+            if self.data_manager.is_authenticated():
+                self.dlg.show_cancel_button()  # Show cancel button when starting fetch
+
             self.data_manager.fetch_data(tab_name, params, fetch_all)
-            
+
         except Exception as e:
             error_msg = f"Data fetch error: {str(e)}"
             log_error(error_msg)
@@ -582,8 +589,21 @@ class DataImporter:
             # Show import success message in plugin dialog
             if self.dlg:
                 self.dlg.show_plugin_message(message, "success", 5000)
+
+                # Bring QGIS main window to focus (plugin dialog goes to back)
+                self._bring_qgis_to_focus()
         else:
             self.dlg.show_error(message)
+
+    def _bring_qgis_to_focus(self):
+        """Bring QGIS main window to focus."""
+        try:
+            if self.iface and self.iface.mainWindow():
+                main_window = self.iface.mainWindow()
+                main_window.raise_()
+                main_window.activateWindow()
+        except Exception as e:
+            log_warning(f"Failed to bring QGIS to focus: {e}")
 
     def _is_assay_data(self, data):
         """Detect if data is assay data with depth intervals.
@@ -652,11 +672,18 @@ class DataImporter:
         try:
             self.data_manager.cancel_request()
             self.dlg.hide_cancel_button()
-            
+            # Show cancellation message
+            self.dlg.show_plugin_message("Request cancelled", "info", 3000)
+
         except Exception as e:
+            # Log the error but don't show popup for expected race conditions
             error_msg = f"Cancel request error: {str(e)}"
-            log_error(error_msg)
-            self.dlg.show_error(error_msg)
+            log_warning(error_msg)
+            # Still hide the cancel button and try to clean up
+            self.dlg.hide_cancel_button()
+            # Only show error if it's something unexpected (not list.remove errors)
+            if "list.remove" not in str(e):
+                self.dlg.show_error(error_msg)
 
     def _handle_page_next(self, tab_name: str):
         """Handle next page request."""

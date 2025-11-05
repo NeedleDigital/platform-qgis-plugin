@@ -345,8 +345,8 @@ def get_preset_by_name(name: str) -> TraceRangeConfiguration:
     """
     presets = {
         "Default": get_industry_standard_preset,
-        "Conservative": get_conservative_preset,
-        "Aggressive": get_aggressive_preset
+        # "Conservative": get_conservative_preset,  # Commented out for later use
+        # "Aggressive": get_aggressive_preset  # Commented out for later use
     }
 
     if name in presets:
@@ -358,4 +358,4 @@ def get_preset_by_name(name: str) -> TraceRangeConfiguration:
 
 def get_available_presets() -> List[str]:
     """Get list of available preset names."""
-    return ["Default", "Conservative", "Aggressive"]
+    return ["Default"]  # "Conservative", "Aggressive" commented out for later use

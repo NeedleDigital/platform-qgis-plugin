@@ -228,15 +228,26 @@ class MessageBar(QWidget):
                 # Fallback if setupUI failed
                 return
 
-            # Simple styling based on message type
+            # Detect theme for appropriate styling
+            from PyQt5.QtWidgets import QApplication
+            palette = QApplication.palette()
+            window_color = palette.color(palette.Window)
+            is_dark_theme = window_color.lightness() < 128
+
+            # Theme-aware styling based on message type
+            # Message bars should be bright enough to stand out in both themes
             if message_type.lower() == "success":
-                self.setStyleSheet("background-color: #4CAF50; color: white; padding: 8px; border-radius: 4px;")
+                bg_color = "#2E7D32" if is_dark_theme else "#4CAF50"
+                self.setStyleSheet(f"background-color: {bg_color}; color: white; padding: 8px; border-radius: 4px;")
             elif message_type.lower() == "error" or message_type.lower() == "critical":
-                self.setStyleSheet("background-color: #f44336; color: white; padding: 8px; border-radius: 4px;")
+                bg_color = "#C62828" if is_dark_theme else "#f44336"
+                self.setStyleSheet(f"background-color: {bg_color}; color: white; padding: 8px; border-radius: 4px;")
             elif message_type.lower() == "warning":
-                self.setStyleSheet("background-color: #FF9800; color: white; padding: 8px; border-radius: 4px;")
+                bg_color = "#EF6C00" if is_dark_theme else "#FF9800"
+                self.setStyleSheet(f"background-color: {bg_color}; color: white; padding: 8px; border-radius: 4px;")
             else:  # info
-                self.setStyleSheet("background-color: #2196F3; color: white; padding: 8px; border-radius: 4px;")
+                bg_color = "#1565C0" if is_dark_theme else "#2196F3"
+                self.setStyleSheet(f"background-color: {bg_color}; color: white; padding: 8px; border-radius: 4px;")
 
             self.setVisible(True)
 
@@ -1020,7 +1031,8 @@ class LayerOptionsDialog(QDialog):
         point_style_layout.addWidget(QLabel("Pick Color:"))
         # Color selection button (Already defined with its style)
         self.color_button = QPushButton()
-        self.color_button.setMaximumSize(40, 25) 
+        self.color_button.setFixedHeight(20)
+        self.color_button.setFixedWidth(48)
         self.color_button.setAutoDefault(False)
         # ... connect and style button (ensure the rounded style is applied)
         self.selected_color = QColor(255, 0, 0)
@@ -1076,9 +1088,11 @@ class LayerOptionsDialog(QDialog):
 
             self.trace_preset_combo = QComboBox()
             for preset_name in get_available_presets():
-                self.trace_preset_combo.addItem(preset_name)
+                # Add "(Cannot edit)" suffix to preset names
+                display_name = f"{preset_name} (Cannot edit)"
+                self.trace_preset_combo.addItem(display_name, preset_name)  # Store original name as data
             self.trace_preset_combo.addItem("Custom")  # Add Custom option
-            self.trace_preset_combo.setCurrentText("Default")
+            self.trace_preset_combo.setCurrentText("Default (Cannot edit)")
             self.trace_preset_combo.currentTextChanged.connect(self._on_preset_changed)
             self.trace_preset_combo.setFocusPolicy(Qt.ClickFocus)  # Prevent wheel scrolling when not focused
             preset_layout.addWidget(self.trace_preset_combo, stretch=1)
@@ -1142,6 +1156,10 @@ class LayerOptionsDialog(QDialog):
         self.button_box.rejected.connect(self.reject)
         layout.addWidget(self.button_box)
 
+        # Apply theme-aware styling to combo boxes
+        if self.is_assay_data:
+            self._apply_combobox_styling()
+
     def _populate_ranges(self):
         """Populate range widgets from current configuration."""
         # Clear existing widgets
@@ -1159,6 +1177,9 @@ class LayerOptionsDialog(QDialog):
         # Update editability based on preset
         is_custom = self.trace_preset_combo.currentText() == "Custom"
         self._set_ranges_editable(is_custom)
+
+        # Apply theme-aware styling to newly added combo boxes
+        self._apply_combobox_styling()
 
     def _add_range_widget(self, trace_range):
         """Add a range widget to the layout."""
@@ -1216,6 +1237,125 @@ class LayerOptionsDialog(QDialog):
         if hasattr(self, 'add_range_button'):
             self.add_range_button.setVisible(editable)
 
+    def _apply_combobox_styling(self):
+        """Apply theme-aware styling to all combo boxes in the dialog."""
+        try:
+            from PyQt5.QtWidgets import QApplication
+            palette = QApplication.palette()
+            window_color = palette.color(palette.Window)
+            is_dark_theme = window_color.lightness() < 128
+
+            if is_dark_theme:
+                combobox_style = """
+                    QComboBox {
+                        color: #FFFFFF;
+                        background-color: #3C3C3C;
+                        border: 1px solid #555555;
+                        padding: 3px 25px 3px 3px;
+                    }
+                    QComboBox:hover {
+                        border: 1px solid #777777;
+                    }
+                    QComboBox:disabled {
+                        color: #808080;
+                        background-color: #2A2A2A;
+                        border: 1px solid #444444;
+                    }
+                    QComboBox::drop-down {
+                        subcontrol-origin: padding;
+                        subcontrol-position: top right;
+                        width: 20px;
+                        border-left: 1px solid #555555;
+                        background-color: #4A4A4A;
+                    }
+                    QComboBox::drop-down:hover {
+                        background-color: #555555;
+                    }
+                    QComboBox::drop-down:disabled {
+                        background-color: #2A2A2A;
+                        border-left: 1px solid #444444;
+                    }
+                    QComboBox::down-arrow {
+                        image: none;
+                        border-left: 4px solid transparent;
+                        border-right: 4px solid transparent;
+                        border-top: 6px solid #FFFFFF;
+                        width: 0px;
+                        height: 0px;
+                    }
+                    QComboBox::down-arrow:disabled {
+                        border-top: 6px solid #555555;
+                    }
+                    QComboBox QAbstractItemView {
+                        color: #FFFFFF;
+                        background-color: #3C3C3C;
+                        selection-background-color: #4A4A4A;
+                        selection-color: #FFFFFF;
+                    }
+                """
+            else:
+                combobox_style = """
+                    QComboBox {
+                        color: #000000;
+                        background-color: #FFFFFF;
+                        border: 1px solid #CCCCCC;
+                        padding: 3px 25px 3px 3px;
+                    }
+                    QComboBox:hover {
+                        border: 1px solid #999999;
+                    }
+                    QComboBox:disabled {
+                        color: #999999;
+                        background-color: #F5F5F5;
+                        border: 1px solid #E0E0E0;
+                    }
+                    QComboBox::drop-down {
+                        subcontrol-origin: padding;
+                        subcontrol-position: top right;
+                        width: 20px;
+                        border-left: 1px solid #CCCCCC;
+                        background-color: #F0F0F0;
+                    }
+                    QComboBox::drop-down:hover {
+                        background-color: #E0E0E0;
+                    }
+                    QComboBox::drop-down:disabled {
+                        background-color: #F5F5F5;
+                        border-left: 1px solid #E0E0E0;
+                    }
+                    QComboBox::down-arrow {
+                        image: none;
+                        border-left: 4px solid transparent;
+                        border-right: 4px solid transparent;
+                        border-top: 6px solid #000000;
+                        width: 0px;
+                        height: 0px;
+                    }
+                    QComboBox::down-arrow:disabled {
+                        border-top: 6px solid #BBBBBB;
+                    }
+                    QComboBox QAbstractItemView {
+                        color: #000000;
+                        background-color: #FFFFFF;
+                        selection-background-color: #E3F2FD;
+                        selection-color: #000000;
+                    }
+                """
+
+            # Apply to trace preset combo
+            self.trace_preset_combo.setStyleSheet(combobox_style)
+
+            # Apply to all range widget combos (lower/upper type combos)
+            for widget in self.range_widgets:
+                if hasattr(widget, 'lower_type_combo'):
+                    widget.lower_type_combo.setStyleSheet(combobox_style)
+                if hasattr(widget, 'upper_type_combo'):
+                    widget.upper_type_combo.setStyleSheet(combobox_style)
+
+        except Exception:
+            # Fail silently - styling is optional
+            pass
+
     def _on_preset_changed(self, preset_name):
         """Handle preset selection change."""
         from ..config.trace_ranges import get_preset_by_name, get_industry_standard_preset, TraceRange
@@ -1238,8 +1378,10 @@ class LayerOptionsDialog(QDialog):
             self.trace_range_config = TraceRangeConfiguration(custom_ranges, "Custom")
             self._populate_ranges()
         else:
+            # Extract actual preset name from display name (remove " (Cannot edit)" suffix)
+            actual_preset_name = preset_name.replace(" (Cannot edit)", "")
             # Load preset configuration
-            self.trace_range_config = get_preset_by_name(preset_name)
+            self.trace_range_config = get_preset_by_name(actual_preset_name)
             self._populate_ranges()
 
     def _on_accept(self):
@@ -1338,7 +1480,7 @@ class LayerOptionsDialog(QDialog):
                 border: 2px solid #333;
                 padding: 8px;
                 font-weight: bold;
-                border-radius: 10px; 
+                border-radius: 1px; 
             }}
             QPushButton:hover {{
                 cursor:pointer
@@ -2113,10 +2255,12 @@ class TraceRangeWidget(QWidget):
         self.name_input.textChanged.connect(self.changed.emit)
         top_row.addWidget(self.name_input, stretch=3)
 
-        self.color_button = QPushButton("Color")
-        self.color_button.setFixedWidth(60)
+        self.color_button = QPushButton(" ")  # Single space to ensure button is clickable
+        self.color_button.setFixedHeight(20)
+        self.color_button.setFixedWidth(48)
         self.color_button.setDefault(False)
         self.color_button.setAutoDefault(False)
+        self.color_button.setCursor(QCursor(Qt.PointingHandCursor))  # Show pointer cursor on hover
         self.selected_color = QColor(100, 181, 246)  # Default blue
         self._update_color_button()
         self.color_button.clicked.connect(self._select_color)

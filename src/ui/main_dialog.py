@@ -267,13 +267,13 @@ class DataImporterDialog(QDialog):
                 try:
                     value = float(text)
                     if value < 0:
-                        max_depth_input.setStyleSheet("border: 1px solid red; background-color: #ffe6e6;")
+                        max_depth_input.setStyleSheet(self._get_error_styling())
                         max_depth_input.setToolTip("Depth cannot be negative")
                     else:
                         max_depth_input.setStyleSheet("")
                         max_depth_input.setToolTip("")
                 except ValueError:
-                    max_depth_input.setStyleSheet("border: 1px solid red; background-color: #ffe6e6;")
+                    max_depth_input.setStyleSheet(self._get_error_styling())
                     max_depth_input.setToolTip("Please enter a valid numeric value")
 
             max_depth_input.textChanged.connect(on_depth_text_changed)
@@ -298,26 +298,19 @@ class DataImporterDialog(QDialog):
             bbox_button = QPushButton("📍 Select Area ")
             bbox_button.setToolTip("Draw a bounding box on the map to filter by geographic area")
             bbox_button.setMaximumWidth(110)
-            bbox_button.setStyleSheet(
-                "color: white;"
-            )
+            # Theme-aware styling applied in _apply_theme_aware_styling()
             bbox_button.clicked.connect(lambda: self._handle_bbox_selection("Holes"))
 
             # Bounding box indicator/clear button
             bbox_indicator = QLabel("")
             bbox_indicator.setVisible(False)
-            bbox_indicator.setStyleSheet(
-                "padding: 4px 8px; background-color: #359d33; color: white; "
-                "border-radius: 3px; font-size: 10px; font-weight: bold;"
-            )
+            # Theme-aware styling applied in _apply_theme_aware_styling()
 
             bbox_clear_button = QPushButton("✕")
             bbox_clear_button.setToolTip("Clear bounding box selection")
             bbox_clear_button.setMaximumWidth(25)
             bbox_clear_button.setMaximumHeight(25)
-            bbox_clear_button.setStyleSheet(
-                "color: white;"
-            )
+            # Theme-aware styling applied in _apply_theme_aware_styling()
             bbox_clear_button.setVisible(False)
             bbox_clear_button.clicked.connect(lambda: self._clear_bbox_selection("Holes"))
 
@@ -377,7 +370,7 @@ class DataImporterDialog(QDialog):
                     value_input.setStyleSheet("")  # Clear any error styling
                 except ValueError:
                     # Invalid number - show error styling
-                    value_input.setStyleSheet("border: 1px solid red; background-color: #ffe6e6;")
+                    value_input.setStyleSheet(self._get_error_styling())
                     value_input.setToolTip("Please enter a valid numeric value (e.g., 1.5, -2.0, 100)")
 
             value_input.textChanged.connect(on_value_text_changed)
@@ -496,26 +489,19 @@ class DataImporterDialog(QDialog):
             bbox_button = QPushButton("📍 Select Area ")
             bbox_button.setToolTip("Draw a bounding box on the map to filter by geographic area")
             bbox_button.setMaximumWidth(110)
-            bbox_button.setStyleSheet(
-                "color: white;"
-            )
+            # Theme-aware styling applied in _apply_theme_aware_styling()
             bbox_button.clicked.connect(lambda: self._handle_bbox_selection("Assays"))
 
             # Bounding box indicator/clear button
             bbox_indicator = QLabel("")
             bbox_indicator.setVisible(False)
-            bbox_indicator.setStyleSheet(
-                "padding: 4px 8px; background-color: #359d33; color: white; "
-                "border-radius: 3px; font-size: 10px; font-weight: bold;"
-            )
+            # Theme-aware styling applied in _apply_theme_aware_styling()
 
             bbox_clear_button = QPushButton("✕")
             bbox_clear_button.setToolTip("Clear bounding box selection")
             bbox_clear_button.setMaximumWidth(25)
             bbox_clear_button.setMaximumHeight(25)
-            bbox_clear_button.setStyleSheet(
-                "color: white;"
-            )
+            # Theme-aware styling applied in _apply_theme_aware_styling()
             bbox_clear_button.setVisible(False)
             bbox_clear_button.clicked.connect(lambda: self._clear_bbox_selection("Assays"))
 
@@ -571,7 +557,7 @@ class DataImporterDialog(QDialog):
         no_data_font = no_data_label.font()
         no_data_font.setPointSize(13)
         no_data_label.setFont(no_data_font)
-        no_data_label.setStyleSheet("color: #ffffff; font-style: italic;")
+        # Theme-aware styling applied in _apply_theme_aware_styling()
 
         # Location-only data widget (for coordinate data)
         location_widget = QWidget()
@@ -1008,70 +994,138 @@ class DataImporterDialog(QDialog):
         self.role_badge.setText(display_name)
         self.role_badge.setVisible(True)
 
-        # Apply role-specific styling (smaller, compact design)
+        # Detect theme
+        palette = QApplication.palette()
+        window_color = palette.color(palette.Window)
+        is_dark_theme = window_color.lightness() < 128
+
+        # Apply role-specific styling with theme awareness
         if role == "tier_1":
-            # Free Trial - Light blue/gray style
-            self.role_badge.setStyleSheet("""
-                QPushButton {
-                    background-color: #E3F2FD;
-                    color: #1976D2;
-                    border: 1px solid #64B5F6;
-                    border-radius: 4px;
-                    padding: 2px 6px;
-                    font-weight: bold;
-                    font-size: 10px;
-                    max-height: 18px;
-                }
-                QPushButton:hover {
-                    background-color: #BBDEFB;
-                    border-color: #1976D2;
-                }
-                QPushButton:pressed {
-                    background-color: #90CAF9;
-                }
-            """)
+            # Free Trial - Blue style adapted for theme
+            if is_dark_theme:
+                self.role_badge.setStyleSheet("""
+                    QPushButton {
+                        background-color: #1565C0;
+                        color: #E3F2FD;
+                        border: 1px solid #42A5F5;
+                        border-radius: 4px;
+                        padding: 2px 6px;
+                        font-weight: bold;
+                        font-size: 10px;
+                        max-height: 18px;
+                    }
+                    QPushButton:hover {
+                        background-color: #1976D2;
+                        border-color: #64B5F6;
+                    }
+                    QPushButton:pressed {
+                        background-color: #0D47A1;
+                    }
+                """)
+            else:
+                self.role_badge.setStyleSheet("""
+                    QPushButton {
+                        background-color: #E3F2FD;
+                        color: #1976D2;
+                        border: 1px solid #64B5F6;
+                        border-radius: 4px;
+                        padding: 2px 6px;
+                        font-weight: bold;
+                        font-size: 10px;
+                        max-height: 18px;
+                    }
+                    QPushButton:hover {
+                        background-color: #BBDEFB;
+                        border-color: #1976D2;
+                    }
+                    QPushButton:pressed {
+                        background-color: #90CAF9;
+                    }
+                """)
         elif role == "tier_2":
-            # Premium - Gold/amber style
-            self.role_badge.setStyleSheet("""
-                QPushButton {
-                    background-color: #FFF3E0;
-                    color: #E65100;
-                    border: 1px solid #FFB74D;
-                    border-radius: 4px;
-                    padding: 2px 6px;
-                    font-weight: bold;
-                    font-size: 10px;
-                    max-height: 18px;
-                }
-                QPushButton:hover {
-                    background-color: #FFE0B2;
-                    border-color: #E65100;
-                }
-                QPushButton:pressed {
-                    background-color: #FFCC80;
-                }
-            """)
+            # Premium - Gold/amber style adapted for theme
+            if is_dark_theme:
+                self.role_badge.setStyleSheet("""
+                    QPushButton {
+                        background-color: #E65100;
+                        color: #FFF3E0;
+                        border: 1px solid #FF9800;
+                        border-radius: 4px;
+                        padding: 2px 6px;
+                        font-weight: bold;
+                        font-size: 10px;
+                        max-height: 18px;
+                    }
+                    QPushButton:hover {
+                        background-color: #F57C00;
+                        border-color: #FFB74D;
+                    }
+                    QPushButton:pressed {
+                        background-color: #BF360C;
+                    }
+                """)
+            else:
+                self.role_badge.setStyleSheet("""
+                    QPushButton {
+                        background-color: #FFF3E0;
+                        color: #E65100;
+                        border: 1px solid #FFB74D;
+                        border-radius: 4px;
+                        padding: 2px 6px;
+                        font-weight: bold;
+                        font-size: 10px;
+                        max-height: 18px;
+                    }
+                    QPushButton:hover {
+                        background-color: #FFE0B2;
+                        border-color: #E65100;
+                    }
+                    QPushButton:pressed {
+                        background-color: #FFCC80;
+                    }
+                """)
         elif role == "admin":
-            # Admin - Purple style
-            self.role_badge.setStyleSheet("""
-                QPushButton {
-                    background-color: #F3E5F5;
-                    color: #6A1B9A;
-                    border: 1px solid #BA68C8;
-                    border-radius: 4px;
-                    padding: 2px 6px;
-                    font-weight: bold;
-                    font-size: 10px;
-                    max-height: 18px;
-                }
-                QPushButton:hover {
-                    background-color: #E1BEE7;
-                    border-color: #6A1B9A;
-                }
-                QPushButton:pressed {
-                    background-color: #CE93D8;
-                }
-            """)
+            # Admin - Purple style adapted for theme
+            if is_dark_theme:
+                self.role_badge.setStyleSheet("""
+                    QPushButton {
+                        background-color: #6A1B9A;
+                        color: #F3E5F5;
+                        border: 1px solid #AB47BC;
+                        border-radius: 4px;
+                        padding: 2px 6px;
+                        font-weight: bold;
+                        font-size: 10px;
+                        max-height: 18px;
+                    }
+                    QPushButton:hover {
+                        background-color: #7B1FA2;
+                        border-color: #BA68C8;
+                    }
+                    QPushButton:pressed {
+                        background-color: #4A148C;
+                    }
+                """)
+            else:
+                self.role_badge.setStyleSheet("""
+                    QPushButton {
+                        background-color: #F3E5F5;
+                        color: #6A1B9A;
+                        border: 1px solid #BA68C8;
+                        border-radius: 4px;
+                        padding: 2px 6px;
+                        font-weight: bold;
+                        font-size: 10px;
+                        max-height: 18px;
+                    }
+                    QPushButton:hover {
+                        background-color: #E1BEE7;
+                        border-color: #6A1B9A;
+                    }
+                    QPushButton:pressed {
+                        background-color: #CE93D8;
+                    }
+                """)
 
     def _validate_record_count(self, count_input: QLineEdit, tab_name: str):
         """Validate record count input - max 1000 for tier_1, max 1M for tier_2/admin."""
@@ -1094,7 +1148,7 @@ class DataImporterDialog(QDialog):
                 # Check 1M limit for all users
                 if value > 1000000:
                     # Show error styling
-                    count_input.setStyleSheet("border: 2px solid #f44336; background-color: #ffebee;")
+                    count_input.setStyleSheet(self._get_error_styling())
 
                     # Reset to 1M
                     count_input.blockSignals(True)
@@ -1113,7 +1167,7 @@ class DataImporterDialog(QDialog):
                 # Check tier_1 limit (1000 records)
                 elif role == "tier_1" and value > 1000:
                     # Show error styling
-                    count_input.setStyleSheet("border: 2px solid #f44336; background-color: #ffebee;")
+                    count_input.setStyleSheet(self._get_error_styling())
 
                     # Reset to 1000
                     count_input.blockSignals(True)
@@ -1136,7 +1190,7 @@ class DataImporterDialog(QDialog):
             else:
                 # Not logged in, still enforce 1M limit
                 if value > 1000000:
-                    count_input.setStyleSheet("border: 2px solid #f44336; background-color: #ffebee;")
+                    count_input.setStyleSheet(self._get_error_styling())
                     count_input.blockSignals(True)
                     count_input.setText("1000000")
                     count_input.blockSignals(False)
@@ -1753,6 +1807,66 @@ class DataImporterDialog(QDialog):
                 }
             """)
 
+            # Bounding box buttons - Select Area and Clear Box
+            bbox_button_style = """
+                QPushButton {{
+                    background-color: {bg_color};
+                    color: {text_color};
+                    border: 1px solid {border_color};
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    font-weight: normal;
+                }}
+                QPushButton:hover {{
+                    background-color: {hover_bg};
+                    border: 1px solid {hover_border};
+                }}
+                QPushButton:pressed {{
+                    background-color: {pressed_bg};
+                }}
+            """.format(
+                bg_color=primary_bg,
+                text_color=primary_text,
+                border_color=border_color,
+                hover_bg=adjust_color_brightness(primary_bg, 1.2),
+                hover_border=adjust_color_brightness(border_color, 1.3),
+                pressed_bg=adjust_color_brightness(primary_bg, 0.8)
+            )
+
+            # Apply to bounding box buttons in both tabs
+            self.holes_tab['bbox_button'].setStyleSheet(bbox_button_style)
+            self.holes_tab['bbox_clear_button'].setStyleSheet(bbox_button_style)
+            self.assays_tab['bbox_button'].setStyleSheet(bbox_button_style)
+            self.assays_tab['bbox_clear_button'].setStyleSheet(bbox_button_style)
+
+            # No data labels - use theme-appropriate text color
+            label_text_color = "#FFFFFF" if is_dark_theme else "#000000"
+            no_data_label_style = f"color: {label_text_color}; font-style: italic;"
+            self.holes_tab['no_data_label'].setStyleSheet(no_data_label_style)
+            self.assays_tab['no_data_label'].setStyleSheet(no_data_label_style)
+
+            # Loading labels - use theme-appropriate text color
+            loading_label_style = f"color: {label_text_color}; font-style: italic;"
+            self.holes_tab['loading_label'].setStyleSheet(loading_label_style)
+            self.assays_tab['loading_label'].setStyleSheet(loading_label_style)
+
+            # Bounding box indicators - use theme-aware green styling
+            bbox_indicator_bg = "#2E7D32" if is_dark_theme else "#4CAF50"
+            bbox_indicator_text = "#E8F5E9"
+            bbox_indicator_style = (
+                f"padding: 4px 8px; background-color: {bbox_indicator_bg}; "
+                f"color: {bbox_indicator_text}; border-radius: 3px; "
+                f"font-size: 10px; font-weight: bold;"
+            )
+            self.holes_tab['bbox_indicator'].setStyleSheet(bbox_indicator_style)
+            self.assays_tab['bbox_indicator'].setStyleSheet(bbox_indicator_style)
+
+            # QComboBox styling - apply to all combo boxes for consistent theme-aware text
+            combobox_style = self._get_combobox_styling()
+            # Apply to Assays tab dropdowns
+            self.assays_tab['element_input'].setStyleSheet(combobox_style)
+            self.assays_tab['operator_input'].setStyleSheet(combobox_style)
+
 
         except Exception as e:
             log_warning(f"Failed to apply theme-aware styling: {e}")
@@ -1782,6 +1896,110 @@ class DataImporterDialog(QDialog):
                           self.holes_tab['location_import_button'], self.assays_tab['location_import_button'],
                           self.cancel_button, self.view_details_button]:
                 button.setStyleSheet(basic_style)
+
+    def _get_error_styling(self) -> str:
+        """Get theme-aware error styling for input fields."""
+        try:
+            palette = QApplication.palette()
+            window_color = palette.color(palette.Window)
+            is_dark_theme = window_color.lightness() < 128
+
+            if is_dark_theme:
+                # Dark theme - brighter error colors for visibility
+                return "border: 2px solid #f44336; background-color: #5D2424;"
+            else:
+                # Light theme - lighter error colors
+                return "border: 2px solid #f44336; background-color: #ffebee;"
+        except Exception as e:
+            log_warning(f"Failed to get theme-aware error styling: {e}")
+            # Fallback to light theme style
+            return "border: 2px solid #f44336; background-color: #ffebee;"
+
+    def _get_combobox_styling(self) -> str:
+        """Get theme-aware styling for QComboBox dropdowns."""
+        try:
+            palette = QApplication.palette()
+            window_color = palette.color(palette.Window)
+            is_dark_theme = window_color.lightness() < 128
+
+            if is_dark_theme:
+                # Dark theme - ensure text is visible with dropdown arrow
+                return """
+                    QComboBox {
+                        color: #FFFFFF;
+                        background-color: #3C3C3C;
+                        border: 1px solid #555555;
+                        padding: 3px 25px 3px 3px;
+                    }
+                    QComboBox:hover {
+                        border: 1px solid #777777;
+                    }
+                    QComboBox::drop-down {
+                        subcontrol-origin: padding;
+                        subcontrol-position: top right;
+                        width: 20px;
+                        border-left: 1px solid #555555;
+                        background-color: #4A4A4A;
+                    }
+                    QComboBox::drop-down:hover {
+                        background-color: #555555;
+                    }
+                    QComboBox::down-arrow {
+                        image: none;
+                        border-left: 4px solid transparent;
+                        border-right: 4px solid transparent;
+                        border-top: 6px solid #FFFFFF;
+                        width: 0px;
+                        height: 0px;
+                    }
+                    QComboBox QAbstractItemView {
+                        color: #FFFFFF;
+                        background-color: #3C3C3C;
+                        selection-background-color: #4A4A4A;
+                        selection-color: #FFFFFF;
+                    }
+                """
+            else:
+                # Light theme - ensure text is visible with dropdown arrow
+                return """
+                    QComboBox {
+                        color: #000000;
+                        background-color: #FFFFFF;
+                        border: 1px solid #CCCCCC;
+                        padding: 3px 25px 3px 3px;
+                    }
+                    QComboBox:hover {
+                        border: 1px solid #999999;
+                    }
+                    QComboBox::drop-down {
+                        subcontrol-origin: padding;
+                        subcontrol-position: top right;
+                        width: 20px;
+                        border-left: 1px solid #CCCCCC;
+                        background-color: #F0F0F0;
+                    }
+                    QComboBox::drop-down:hover {
+                        background-color: #E0E0E0;
+                    }
+                    QComboBox::down-arrow {
+                        image: none;
+                        border-left: 4px solid transparent;
+                        border-right: 4px solid transparent;
+                        border-top: 6px solid #000000;
+                        width: 0px;
+                        height: 0px;
+                    }
+                    QComboBox QAbstractItemView {
+                        color: #000000;
+                        background-color: #FFFFFF;
+                        selection-background-color: #E3F2FD;
+                        selection-color: #000000;
+                    }
+                """
+        except Exception as e:
+            log_warning(f"Failed to get theme-aware combobox styling: {e}")
+            # Fallback - minimal styling that should work in most themes
+            return ""
 
     def _setup_window_geometry(self):
         """Setup window size to 75% width and full height, centered to QGIS."""
