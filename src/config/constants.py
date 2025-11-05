@@ -124,7 +124,7 @@ DEFAULT_TRACE_RANGE_PRESET = "Default"  # Default preset to use
 # Australian states and territories
 AUSTRALIAN_STATES: List[Tuple[str, str]] = [
     ("New South Wales", "NSW"),
-    ("Queensland", "QLD"), 
+    ("Queensland", "QLD"),
     ("South Australia", "SA"),
     ("Tasmania", "TAS"),
     ("Victoria", "VIC"),

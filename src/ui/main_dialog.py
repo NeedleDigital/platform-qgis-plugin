@@ -219,7 +219,7 @@ class DataImporterDialog(QDialog):
         if tab_type == "Holes":
             # Company filter
             company_filter = DynamicSearchFilterWidget()
-            company_filter.search_box.setPlaceholderText("Type to search companies...")
+            company_filter.search_box.setPlaceholderText("Type to search companies like BHP, Rio Tinto, Fortescue Metals etc.")
             controls_layout.addRow("Company Name(s):", company_filter)
             widgets['company_filter'] = company_filter
 
@@ -284,6 +284,7 @@ class DataImporterDialog(QDialog):
             # Add the container to the main layout with 1 part of the ratio
             hole_depth_layout.addWidget(max_depth_container, 1)
 
+
             controls_layout.addRow("Hole Type & Depth:", hole_depth_layout)
             widgets['max_depth_input'] = max_depth_input
 
@@ -344,7 +345,11 @@ class DataImporterDialog(QDialog):
             element_input = QComboBox()
             for display_name, symbol in CHEMICAL_ELEMENTS:
                 element_input.addItem(display_name, symbol)
-            
+
+            # Set Copper as default selected element
+            copper_index = next((i for i, (name, symbol) in enumerate(CHEMICAL_ELEMENTS) if symbol == 'cu'), 0)
+            element_input.setCurrentIndex(copper_index)
+
             operator_input = QComboBox()
             operator_input.addItem("None")  # Add None as first option
             operator_input.addItems(COMPARISON_OPERATORS)
@@ -469,7 +474,7 @@ class DataImporterDialog(QDialog):
 
             # Company filter (separate row with container for proper alignment)
             company_filter = DynamicSearchFilterWidget()
-            company_filter.search_box.setPlaceholderText("Type to search companies...")
+            company_filter.search_box.setPlaceholderText("Type to search companies like BHP, Rio Tinto, Fortescue Metals etc.")
             company_filter_container = QWidget()
             company_filter_container_layout = QVBoxLayout(company_filter_container)
             company_filter_container_layout.setContentsMargins(0, 0, 0, 0)
@@ -545,19 +550,23 @@ class DataImporterDialog(QDialog):
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         
         # Loading label
-        loading_label = QLabel("Waiting for data...")
+        loading_label = QLabel("Loading data...")
         loading_label.setAlignment(Qt.AlignCenter)
         font = loading_label.font()
         font.setPointSize(12)
         loading_label.setFont(font)
-        
-        # No data label
+
+        # No data label - only shown after API call returns 0 results
         no_data_label = QLabel("No data present with given filters.")
         no_data_label.setAlignment(Qt.AlignCenter)
         no_data_font = no_data_label.font()
         no_data_font.setPointSize(13)
         no_data_label.setFont(no_data_font)
         # Theme-aware styling applied in _apply_theme_aware_styling()
+
+        # Empty placeholder - shown initially and after reset (no message)
+        empty_placeholder = QLabel("")
+        empty_placeholder.setAlignment(Qt.AlignCenter)
 
         # Location-only data widget (for coordinate data)
         location_widget = QWidget()
@@ -585,15 +594,17 @@ class DataImporterDialog(QDialog):
         content_stack.addWidget(table)
         content_stack.addWidget(loading_label)
         content_stack.addWidget(no_data_label)
+        content_stack.addWidget(empty_placeholder)
         content_stack.addWidget(location_widget)
-        content_stack.setCurrentWidget(loading_label)
-        
+        content_stack.setCurrentWidget(empty_placeholder)  # Show empty placeholder initially
+
         layout.addLayout(content_stack)
-        
+
         widgets.update({
             'table': table,
             'loading_label': loading_label,
             'no_data_label': no_data_label,
+            'empty_placeholder': empty_placeholder,
             'location_widget': location_widget,
             'location_info_label': location_info_label,
             'location_import_button': location_import_button,
@@ -1365,8 +1376,9 @@ class DataImporterDialog(QDialog):
             self.view_details_button.setVisible(False)
 
             if is_reset_operation:
-                # Reset operation - show "Waiting for data..." message
-                content_stack.setCurrentWidget(loading_label)
+                # Reset operation - show empty placeholder (no message)
+                empty_placeholder = tab_widgets['empty_placeholder']
+                content_stack.setCurrentWidget(empty_placeholder)
                 import_button.setVisible(False)
                 pagination_widget.setVisible(False)
             else:
@@ -1500,20 +1512,22 @@ class DataImporterDialog(QDialog):
         
         # Hide progress bar when loading is complete
         self.progress_bar.setVisible(False)
-        
-        # Restore original waiting message
-        loading_label.setText("Waiting for data...")
-        
-        # Only show waiting message if there's no data in the table AND no data has been fetched yet
+
+        # Restore loading label text for next use
+        loading_label.setText("Loading data...")
+
+        # Only show empty placeholder if there's no data in the table AND no data has been fetched yet
         # If show_data has been called with empty results, it will have set the appropriate view
         table = tab_widgets['table']
         if table.rowCount() == 0:
             # Check if we're currently showing the no_data_label, if so don't override it
             current_widget = content_stack.currentWidget()
             no_data_label = tab_widgets['no_data_label']
+            empty_placeholder = tab_widgets['empty_placeholder']
             if current_widget != no_data_label:
-                content_stack.setCurrentWidget(loading_label)
-        
+                # Show empty placeholder (no message) instead of "Waiting for data..."
+                content_stack.setCurrentWidget(empty_placeholder)
+
         # Re-enable all UI controls after loading
         self._enable_all_controls()
     
@@ -1546,7 +1560,11 @@ class DataImporterDialog(QDialog):
                 tab_widgets['to_depth_input'].setEnabled(False)
                 tab_widgets['company_filter'].setEnabled(False)
                 tab_widgets['count_input'].setEnabled(False)
-            
+
+            # Disable bounding box buttons
+            tab_widgets['bbox_button'].setEnabled(False)
+            tab_widgets['bbox_clear_button'].setEnabled(False)
+
             # Disable pagination and import buttons
             tab_widgets['prev_button'].setEnabled(False)
             tab_widgets['next_button'].setEnabled(False)
@@ -1583,7 +1601,11 @@ class DataImporterDialog(QDialog):
                 tab_widgets['to_depth_input'].setEnabled(True)
                 tab_widgets['company_filter'].setEnabled(True)
                 tab_widgets['count_input'].setEnabled(True)
-            
+
+            # Re-enable bounding box buttons
+            tab_widgets['bbox_button'].setEnabled(True)
+            tab_widgets['bbox_clear_button'].setEnabled(True)
+
             # Note: fetch buttons are handled individually in hide_loading()
             # Note: pagination and import buttons are handled by show_data() based on data availability
     
@@ -1670,9 +1692,17 @@ class DataImporterDialog(QDialog):
         current_tab_name = "Holes" if current_tab_index == 0 else "Assays"
 
         if current_tab_name == "Holes":
+            # Hide loading indicator
+            if hasattr(self.holes_tab['company_filter'], 'hide_loading'):
+                self.holes_tab['company_filter'].hide_loading()
+            # Show results popup
             if hasattr(self.holes_tab['company_filter'], 'showPopup'):
                 self.holes_tab['company_filter'].showPopup(results)
         else:  # Assays
+            # Hide loading indicator
+            if hasattr(self.assays_tab['company_filter'], 'hide_loading'):
+                self.assays_tab['company_filter'].hide_loading()
+            # Show results popup
             if hasattr(self.assays_tab['company_filter'], 'showPopup'):
                 self.assays_tab['company_filter'].showPopup(results)
 
@@ -1703,7 +1733,7 @@ class DataImporterDialog(QDialog):
                 primary_text = "#FFFFFF"    # White text
                 secondary_bg = "#6B8CAE"    # Soft periwinkle blue
                 secondary_text = "#FFFFFF"  # White text
-                danger_bg = "#D4A5A5"       # Soft dusty rose
+                danger_bg = "#D75A5A"       # Soft dusty rose
                 danger_text = "#FFFFFF"     # White text
                 border_color = "#CCCCCC"    # Light gray border
 
@@ -1808,6 +1838,10 @@ class DataImporterDialog(QDialog):
             """)
 
             # Bounding box buttons - Select Area and Clear Box
+            disabled_bg = "#2A2A2A" if is_dark_theme else "#CCCCCC"
+            disabled_text = "#555555" if is_dark_theme else "#666666"
+            disabled_border = "#444444" if is_dark_theme else "#BBBBBB"
+
             bbox_button_style = """
                 QPushButton {{
                     background-color: {bg_color};
@@ -1824,13 +1858,21 @@ class DataImporterDialog(QDialog):
                 QPushButton:pressed {{
                     background-color: {pressed_bg};
                 }}
+                QPushButton:disabled {{
+                    background-color: {disabled_bg};
+                    color: {disabled_text};
+                    border: 1px solid {disabled_border};
+                }}
             """.format(
                 bg_color=primary_bg,
                 text_color=primary_text,
                 border_color=border_color,
                 hover_bg=adjust_color_brightness(primary_bg, 1.2),
                 hover_border=adjust_color_brightness(border_color, 1.3),
-                pressed_bg=adjust_color_brightness(primary_bg, 0.8)
+                pressed_bg=adjust_color_brightness(primary_bg, 0.8),
+                disabled_bg=disabled_bg,
+                disabled_text=disabled_text,
+                disabled_border=disabled_border
             )
 
             # Apply to bounding box buttons in both tabs
@@ -1934,6 +1976,11 @@ class DataImporterDialog(QDialog):
                     QComboBox:hover {
                         border: 1px solid #777777;
                     }
+                    QComboBox:disabled {
+                        color: #808080;
+                        background-color: #2A2A2A;
+                        border: 1px solid #444444;
+                    }
                     QComboBox::drop-down {
                         subcontrol-origin: padding;
                         subcontrol-position: top right;
@@ -1944,6 +1991,10 @@ class DataImporterDialog(QDialog):
                     QComboBox::drop-down:hover {
                         background-color: #555555;
                     }
+                    QComboBox::drop-down:disabled {
+                        background-color: #2A2A2A;
+                        border-left: 1px solid #444444;
+                    }
                     QComboBox::down-arrow {
                         image: none;
                         border-left: 4px solid transparent;
@@ -1951,6 +2002,9 @@ class DataImporterDialog(QDialog):
                         border-top: 6px solid #FFFFFF;
                         width: 0px;
                         height: 0px;
+                    }
+                    QComboBox::down-arrow:disabled {
+                        border-top: 6px solid #555555;
                     }
                     QComboBox QAbstractItemView {
                         color: #FFFFFF;
@@ -1971,6 +2025,11 @@ class DataImporterDialog(QDialog):
                     QComboBox:hover {
                         border: 1px solid #999999;
                     }
+                    QComboBox:disabled {
+                        color: #999999;
+                        background-color: #F5F5F5;
+                        border: 1px solid #E0E0E0;
+                    }
                     QComboBox::drop-down {
                         subcontrol-origin: padding;
                         subcontrol-position: top right;
@@ -1981,6 +2040,10 @@ class DataImporterDialog(QDialog):
                     QComboBox::drop-down:hover {
                         background-color: #E0E0E0;
                     }
+                    QComboBox::drop-down:disabled {
+                        background-color: #F5F5F5;
+                        border-left: 1px solid #E0E0E0;
+                    }
                     QComboBox::down-arrow {
                         image: none;
                         border-left: 4px solid transparent;
@@ -1988,6 +2051,9 @@ class DataImporterDialog(QDialog):
                         border-top: 6px solid #000000;
                         width: 0px;
                         height: 0px;
+                    }
+                    QComboBox::down-arrow:disabled {
+                        border-top: 6px solid #BBBBBB;
                     }
                     QComboBox QAbstractItemView {
                         color: #000000;

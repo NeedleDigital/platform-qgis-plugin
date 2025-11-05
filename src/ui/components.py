@@ -7,7 +7,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QLayout, QComboBox,
     QListView, QDialog, QLineEdit, QFormLayout, QDialogButtonBox, QMessageBox,
     QColorDialog, QProgressDialog, QScrollArea, QFrame, QTableWidget, QTableWidgetItem, QHeaderView,
-    QSizePolicy, QToolButton, QDoubleSpinBox
+    QSizePolicy, QToolButton, QDoubleSpinBox, QApplication
 )
 from qgis.PyQt.QtGui import QFont, QColor, QStandardItemModel, QStandardItem, QCursor, QIcon
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize, QEvent, QTimer
@@ -21,6 +21,69 @@ from ..utils.logging import log_info, log_error, log_warning, log_debug
 from ..config.constants import (
     MAX_SAFE_IMPORT, OSM_LAYER_NAME, OSM_LAYER_URL, PARTIAL_IMPORT_LIMIT, TRACE_SCALE_THRESHOLD
 )
+
+
+def get_theme_aware_button_style() -> str:
+    """Get theme-aware styling for dialog buttons (OK, Cancel, Close).
+
+    Returns:
+        CSS stylesheet string for QPushButton
+    """
+    palette = QApplication.palette()
+    window_color = palette.color(palette.Window)
+    is_dark_theme = window_color.lightness() < 128
+
+    if is_dark_theme:
+        return """
+            QPushButton {
+                background-color: #3C3C3C;
+                color: #FFFFFF;
+                border: 1px solid #555555;
+                padding: 5px 15px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #4A4A4A;
+                border: 1px solid #666666;
+            }
+            QPushButton:pressed {
+                background-color: #2A2A2A;
+            }
+            QPushButton:default {
+                background-color: #0D47A1;
+                border: 1px solid #1976D2;
+            }
+            QPushButton:default:hover {
+                background-color: #1565C0;
+                border: 1px solid #1E88E5;
+            }
+        """
+    else:
+        return """
+            QPushButton {
+                background-color: #F5F5F5;
+                color: #000000;
+                border: 1px solid #CCCCCC;
+                padding: 5px 15px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #E0E0E0;
+                border: 1px solid #999999;
+            }
+            QPushButton:pressed {
+                background-color: #D5D5D5;
+            }
+            QPushButton:default {
+                background-color: #2196F3;
+                color: #FFFFFF;
+                border: 1px solid #1976D2;
+            }
+            QPushButton:default:hover {
+                background-color: #1E88E5;
+                border: 1px solid #1565C0;
+            }
+        """
 
 
 class FlowLayout(QLayout):
@@ -471,10 +534,35 @@ class DynamicSearchFilterWidget(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(4)
 
+        # Create container for search box with loading indicator
+        search_container = QWidget(self)
+        search_layout = QHBoxLayout(search_container)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(0)
+
         self.search_box = QLineEdit(self)
         self.search_box.setPlaceholderText("Type to search...")
         self.search_box.textChanged.connect(self.textChanged.emit)
-        main_layout.addWidget(self.search_box)
+        search_layout.addWidget(self.search_box)
+
+        # Create loading indicator (circular spinner)
+        self.loading_label = QLabel(self)
+        self.loading_label.setFixedSize(20, 20)
+        self.loading_label.setAlignment(Qt.AlignCenter)
+        self.loading_label.setVisible(False)
+        self.loading_label.setStyleSheet("padding: 2px;")
+
+        # Create a simple animated loading indicator using Unicode spinner
+        self.loading_timer = QTimer(self)
+        self.loading_timer.timeout.connect(self._update_loading_animation)
+        self.loading_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        self.loading_frame_index = 0
+
+        # Position loading indicator inside the search box using a widget overlay approach
+        # We'll add it to the search_box layout by styling instead
+        search_layout.addWidget(self.loading_label)
+
+        main_layout.addWidget(search_container)
 
         self.chip_container = QWidget(self)
         self.chip_layout = FlowLayout(self.chip_container, spacing=4)
@@ -623,6 +711,26 @@ class DynamicSearchFilterWidget(QWidget):
             self._updateChips()
             self.selectionChanged.emit(self.currentData())
 
+    def show_loading(self):
+        """Show loading indicator and start animation."""
+        self.loading_label.setVisible(True)
+        self.loading_frame_index = 0
+        self.loading_timer.start(100)  # Update every 100ms
+
+    def hide_loading(self):
+        """Hide loading indicator and stop animation."""
+        self.loading_timer.stop()
+        self.loading_label.setVisible(False)
+
+    def _update_loading_animation(self):
+        """Update the loading animation frame."""
+        self.loading_label.setText(self.loading_frames[self.loading_frame_index])
+        self.loading_frame_index = (self.loading_frame_index + 1) % len(self.loading_frames)
+
+    def has_unselected_text(self):
+        """Check if there's text in the search box that hasn't been selected."""
+        return bool(self.search_box.text().strip())
+
 class SearchableStaticFilterWidget(QWidget):
     """A widget for searchable static data with chip display (no API calls)."""
 
@@ -641,6 +749,11 @@ class SearchableStaticFilterWidget(QWidget):
         self.search_box.setPlaceholderText("Type to search...")
         self.search_box.textChanged.connect(self._on_search_text_changed)
         main_layout.addWidget(self.search_box)
+
+        # Store original mouse press event
+        self._original_mouse_press_event = self.search_box.mousePressEvent
+        # Override mouse press event to show all options on click
+        self.search_box.mousePressEvent = self._on_search_box_mouse_press
 
         self.chip_container = QWidget(self)
         self.chip_layout = FlowLayout(self.chip_container, spacing=4)
@@ -689,6 +802,32 @@ class SearchableStaticFilterWidget(QWidget):
         else:
             self.popup.hide()
 
+    def _on_search_box_mouse_press(self, event):
+        """Handle mouse press event on search box to show all options."""
+        # Call original mouse press event first to handle normal behavior
+        self._original_mouse_press_event(event)
+
+        # Show all options if search box is empty
+        if not self.search_box.text().strip():
+            self._show_all_options()
+
+    def _show_all_options(self):
+        """Show all available options in the popup."""
+        all_results = []
+        for item in self._static_data:
+            if isinstance(item, tuple):
+                display_text, value = item
+                # Exclude already selected items
+                if value not in self._selected_items:
+                    all_results.append((display_text, value))
+            elif isinstance(item, str):
+                # Exclude already selected items
+                if item not in self._selected_items:
+                    all_results.append((item, item))
+
+        if all_results:
+            self.showPopup(all_results)
+
     def showPopup(self, results):
         """Show popup with search results."""
         self.results_list.model().clear()
@@ -815,6 +954,10 @@ class SearchableStaticFilterWidget(QWidget):
             self._selected_items = dialog.selected_items.copy()
             self._updateChips()
             self.selectionChanged.emit(self.currentData())
+
+    def has_unselected_text(self):
+        """Check if there's text in the search box that hasn't been selected."""
+        return bool(self.search_box.text().strip())
 
 class StaticFilterWidget(QWidget):
     """A composite widget that combines a CheckableComboBox with a chip container."""
@@ -929,10 +1072,15 @@ class LoginDialog(QDialog):
         # Fix focus issues
         self.button_box.button(QDialogButtonBox.Ok).setDefault(False)
         self.button_box.button(QDialogButtonBox.Ok).setAutoDefault(False)
-        self.button_box.button(QDialogButtonBox.Cancel).setDefault(False) 
+        self.button_box.button(QDialogButtonBox.Cancel).setDefault(False)
         self.button_box.button(QDialogButtonBox.Cancel).setAutoDefault(False)
         self.button_box.accepted.connect(self.handle_login_attempt)
         self.button_box.rejected.connect(self.reject)
+
+        # Apply theme-aware button styling
+        button_style = get_theme_aware_button_style()
+        self.button_box.button(QDialogButtonBox.Ok).setStyleSheet(button_style)
+        self.button_box.button(QDialogButtonBox.Cancel).setStyleSheet(button_style)
         
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -1025,25 +1173,7 @@ class LayerOptionsDialog(QDialog):
 
         # Create a horizontal layout for styling controls
         point_style_layout = QHBoxLayout()
-
-        # --- Point Color Widgets (Button with label) ---
-        # Add color label
-        point_style_layout.addWidget(QLabel("Pick Color:"))
-        # Color selection button (Already defined with its style)
-        self.color_button = QPushButton()
-        self.color_button.setFixedHeight(20)
-        self.color_button.setFixedWidth(48)
-        self.color_button.setAutoDefault(False)
-        # ... connect and style button (ensure the rounded style is applied)
-        self.selected_color = QColor(255, 0, 0)
-        self.update_color_button_stylesheet() # Make sure this applies the rounded style
-        self.color_button.clicked.connect(self.select_color)
-
-        point_style_layout.addWidget(self.color_button)
-
-        # --- Spacing (12 pixels) ---
-        point_style_layout.addSpacing(12)
-
+        
         # --- Point Size Widgets (SpinBox with label) ---
         # Add size label
         point_style_layout.addWidget(QLabel("Point Size:"))
@@ -1056,13 +1186,32 @@ class LayerOptionsDialog(QDialog):
         self.point_size_spin.setFocusPolicy(Qt.StrongFocus) 
 
         point_style_layout.addWidget(self.point_size_spin)
+        
+        # --- Spacing (12 pixels) ---
+        point_style_layout.addSpacing(12)
+
+        # --- Point Color Widgets (Button with label) ---
+        # Add color label
+        point_style_layout.addWidget(QLabel("Color:"))
+        # Color selection button (Already defined with its style)
+        self.color_button = QPushButton()
+        self.color_button.setFixedHeight(20)
+        self.color_button.setFixedWidth(48)
+        self.color_button.setAutoDefault(False)
+        # ... connect and style button (ensure the rounded style is applied)
+        self.selected_color = QColor(255, 0, 0)
+        self.update_color_button_stylesheet() # Make sure this applies the rounded style
+        self.color_button.clicked.connect(self.select_color)
+
+        point_style_layout.addWidget(self.color_button)
+
 
         # --- Add Stretch to Push Elements to the Left ---
         # This line is crucial: it pushes the combined widgets to the left and fills the rest of the row.
         point_style_layout.addStretch()
 
         # Add the final layout to your form
-        form_layout.addRow("Point Styling:", point_style_layout)
+        form_layout.addRow("Styling:", point_style_layout)
 
         layout.addLayout(form_layout)
 
@@ -1088,11 +1237,10 @@ class LayerOptionsDialog(QDialog):
 
             self.trace_preset_combo = QComboBox()
             for preset_name in get_available_presets():
-                # Add "(Cannot edit)" suffix to preset names
-                display_name = f"{preset_name} (Cannot edit)"
+                display_name = f"{preset_name}"
                 self.trace_preset_combo.addItem(display_name, preset_name)  # Store original name as data
             self.trace_preset_combo.addItem("Custom")  # Add Custom option
-            self.trace_preset_combo.setCurrentText("Default (Cannot edit)")
+            self.trace_preset_combo.setCurrentText("Default")
             self.trace_preset_combo.currentTextChanged.connect(self._on_preset_changed)
             self.trace_preset_combo.setFocusPolicy(Qt.ClickFocus)  # Prevent wheel scrolling when not focused
             preset_layout.addWidget(self.trace_preset_combo, stretch=1)
@@ -1154,6 +1302,12 @@ class LayerOptionsDialog(QDialog):
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self._on_accept)
         self.button_box.rejected.connect(self.reject)
+
+        # Apply theme-aware button styling
+        button_style = get_theme_aware_button_style()
+        self.button_box.button(QDialogButtonBox.Ok).setStyleSheet(button_style)
+        self.button_box.button(QDialogButtonBox.Cancel).setStyleSheet(button_style)
+
         layout.addWidget(self.button_box)
 
         # Apply theme-aware styling to combo boxes
@@ -1477,10 +1631,10 @@ class LayerOptionsDialog(QDialog):
         self.color_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {self.selected_color.name()};
-                border: 2px solid #333;
+                border: 1px solid #333;
                 padding: 8px;
                 font-weight: bold;
-                border-radius: 1px; 
+                border-radius: 0px; 
             }}
             QPushButton:hover {{
                 cursor:pointer
@@ -1586,14 +1740,17 @@ Performance Impact:
         
         # Cancel button
         self.cancel_btn = QPushButton("Cancel Import")
-        self.cancel_btn.setStyleSheet("padding: 8px;")
-        
+
+        # Apply theme-aware button styling
+        button_style = get_theme_aware_button_style()
+        self.cancel_btn.setStyleSheet(button_style)
+
         button_layout.addWidget(self.import_all_btn)
         button_layout.addWidget(self.import_partial_btn)
         button_layout.addWidget(self.cancel_btn)
-        
+
         layout.addLayout(button_layout)
-        
+
         # Connect signals
         self.import_all_btn.clicked.connect(self._import_all)
         self.import_partial_btn.clicked.connect(self._import_partial)
@@ -1815,6 +1972,11 @@ class FetchDetailsDialog(QDialog):
         # Close button
         button_box = QDialogButtonBox(QDialogButtonBox.Close)
         button_box.rejected.connect(self.reject)
+
+        # Apply theme-aware button styling
+        button_style = get_theme_aware_button_style()
+        button_box.button(QDialogButtonBox.Close).setStyleSheet(button_style)
+
         layout.addWidget(button_box)
 
 
@@ -2010,6 +2172,12 @@ class PolygonSelectionDialog(QDialog):
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self._on_accept)
         button_box.rejected.connect(self.reject)
+
+        # Apply theme-aware button styling
+        button_style = get_theme_aware_button_style()
+        button_box.button(QDialogButtonBox.Ok).setStyleSheet(button_style)
+        button_box.button(QDialogButtonBox.Cancel).setStyleSheet(button_style)
+
         layout.addWidget(button_box)
 
     def _setup_map(self):
@@ -2354,7 +2522,7 @@ class TraceRangeWidget(QWidget):
         self.color_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {self.selected_color.name()};
-                border: 2px solid #333;
+                border: 1px solid #333;
                 padding: 4px;
                 font-weight: bold;
             }}

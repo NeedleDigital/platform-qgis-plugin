@@ -402,9 +402,50 @@ class DataImporter:
         except Exception as e:
             log_error(f"Login required handler error: {str(e)}")
 
+    def _validate_filter_selections(self, tab_name):
+        """
+        Validate that all filter widgets with text have selections made.
+
+        Returns:
+            str: Error message if validation fails, None if valid
+        """
+        tab_widgets = self.dlg.holes_tab if tab_name == "Holes" else self.dlg.assays_tab
+        errors = []
+
+        # Check company name filter
+        if hasattr(tab_widgets['company_filter'], 'has_unselected_text'):
+            if tab_widgets['company_filter'].has_unselected_text():
+                errors.append("Company Name: You have entered text but haven't selected a company from the list.")
+
+        # Check hole type filter
+        if hasattr(tab_widgets['hole_type_filter'], 'has_unselected_text'):
+            if tab_widgets['hole_type_filter'].has_unselected_text():
+                errors.append("Hole Type: You have entered text but haven't selected a hole type from the list.")
+
+        if errors:
+            error_msg = "Please complete your filter selections:\n\n"
+            error_msg += "\n".join(f"• {err}" for err in errors)
+            error_msg += "\n\nYou can either:\n"
+            error_msg += "• Select an option from the dropdown list, or\n"
+            error_msg += "• Clear the text field to proceed without that filter"
+            return error_msg
+
+        return None
+
     def _handle_data_fetch_request(self, tab_name, params, fetch_all):
         """Handle data fetch request."""
         try:
+            # Validate that there's no unselected text in filters
+            validation_error = self._validate_filter_selections(tab_name)
+            if validation_error:
+                from qgis.PyQt.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self.dlg,
+                    "Invalid Filter Selection",
+                    validation_error
+                )
+                return
+
             # Only show cancel button if user is authenticated
             # If not authenticated, login_required signal will be emitted and login dialog will show
             if self.data_manager.is_authenticated():
@@ -706,8 +747,21 @@ class DataImporter:
     def _handle_company_search_request(self, query: str):
         """Handle company search request."""
         try:
+            # Show loading indicator in the active tab's company filter
+            current_tab_index = self.dlg.tabs.currentIndex()
+            if current_tab_index == 0:  # Holes tab
+                self.dlg.holes_tab['company_filter'].show_loading()
+            else:  # Assays tab
+                self.dlg.assays_tab['company_filter'].show_loading()
+
             self.data_manager.search_companies(query)
         except Exception as e:
             error_msg = f"Company search error: {str(e)}"
             log_error(error_msg)
+            # Hide loading indicator on error
+            current_tab_index = self.dlg.tabs.currentIndex()
+            if current_tab_index == 0:
+                self.dlg.holes_tab['company_filter'].hide_loading()
+            else:
+                self.dlg.assays_tab['company_filter'].hide_loading()
             # Don't show error to user for search failures, just log them

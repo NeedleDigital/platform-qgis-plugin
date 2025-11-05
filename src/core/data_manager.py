@@ -451,7 +451,23 @@ class DataManager(QObject):
     def _handle_api_error(self, endpoint: str, error_message: str) -> None:
         """Handle API error signals."""
         log_error(f"API Error for {endpoint}: {error_message}")
-        self.error_occurred.emit(f"API request failed: {error_message}")
+
+        # Customize error message for company search "Not Found" errors
+        if 'companies/search' in endpoint and 'Not Found' in error_message:
+            # Extract company name from the error message URL if possible
+            import re
+            match = re.search(r'company_name=([^&\s]+)', error_message)
+            if match:
+                company_name = match.group(1).replace('%20', ' ')
+                user_message = f"No company found matching '{company_name}'. Please try a different search term."
+            else:
+                user_message = "No companies found matching your search. Please try a different search term."
+            self.error_occurred.emit(user_message)
+
+            # Emit empty results to hide loading indicator and clear popup
+            self.companies_search_results.emit([])
+        else:
+            self.error_occurred.emit(f"API request failed: {error_message}")
 
         # Reset streaming state on error
         if self.streaming_state:
