@@ -41,7 +41,7 @@ from qgis.PyQt.QtGui import QFont, QCursor, QDoubleValidator, QColor, QIntValida
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QTimer
 
 from .components import (
-    DynamicSearchFilterWidget, StaticFilterWidget, SearchableStaticFilterWidget,
+    DynamicSearchFilterWidget, SearchableStaticFilterWidget,
     LoginDialog, LayerOptionsDialog, LargeImportWarningDialog, ImportProgressDialog, MessageBar,
     FetchDetailsDialog, PolygonSelectionDialog
 )
@@ -196,11 +196,12 @@ class DataImporterDialog(QDialog):
         controls_layout = QFormLayout()
         controls_layout.setRowWrapPolicy(QFormLayout.WrapLongRows)
         
-        # State filter (common to both tabs)
-        state_filter = StaticFilterWidget()
-        state_filter.addItems(AUSTRALIAN_STATES)
-        # Set "All States" as default (first item, empty value)
-        state_filter.setCurrentData([""])
+        # State filter (common to both tabs) - using SearchableStaticFilterWidget for better UX
+        state_filter = SearchableStaticFilterWidget(show_all_chips=True, show_search_icon=False)
+        state_filter.search_box.setPlaceholderText("Click to select states (default all states)...")
+        # Set static data for searching (list of Australian states)
+        state_data = list(AUSTRALIAN_STATES)
+        state_filter.setStaticData(state_data)
         controls_layout.addRow("State(s):", state_filter)
 
         # Hole Type filter (will be positioned differently for each tab)
@@ -248,6 +249,7 @@ class DataImporterDialog(QDialog):
             max_depth_container_layout.setAlignment(Qt.AlignTop)
 
             max_depth_input = QLineEdit()
+            max_depth_input.setTextMargins(4,2,4,2)
             max_depth_input.setPlaceholderText("Enter max depth (m)")
             max_depth_input.setMinimumWidth(100)  # Minimum width for usability
             max_depth_container_layout.addWidget(max_depth_input)
@@ -290,6 +292,7 @@ class DataImporterDialog(QDialog):
 
             # Record count controls with bounding box
             count_input = QLineEdit("100")
+            count_input.setTextMargins(4,1,4,1)
             # Add validator for positive integers only
             count_input.setValidator(QIntValidator(1, 999999999, count_input))
             # Connect to role-based validation
@@ -334,9 +337,10 @@ class DataImporterDialog(QDialog):
             })
 
             # Fetch button
-            fetch_button = QPushButton("Fetch Holes")
+            fetch_button = QPushButton("Fetch Holes Data")
             fetch_button.setDefault(False)
             fetch_button.setAutoDefault(False)
+            fetch_button.setContentsMargins(0, 4, 0, 0)
             controls_layout.addRow("", fetch_button)
             widgets['fetch_button'] = fetch_button
             
@@ -451,6 +455,7 @@ class DataImporterDialog(QDialog):
             from_depth_container_layout.setAlignment(Qt.AlignTop)
             from_depth_input = QLineEdit()
             from_depth_input.setPlaceholderText("From Depth (m):")
+            from_depth_input.setTextMargins(4,2,4,2)
             from_depth_input.setValidator(QIntValidator(0, 999999, from_depth_input))
             from_depth_container_layout.addWidget(from_depth_input)
             hole_depth_assays_layout.addWidget(from_depth_container, 1)
@@ -463,6 +468,7 @@ class DataImporterDialog(QDialog):
             to_depth_container_layout.setAlignment(Qt.AlignTop)
 
             to_depth_input = QLineEdit()
+            to_depth_input.setTextMargins(4,2,4,2)
             to_depth_input.setPlaceholderText("To Depth (m):")
             to_depth_input.setValidator(QIntValidator(0, 999999, to_depth_input))
             to_depth_container_layout.addWidget(to_depth_input)
@@ -485,6 +491,7 @@ class DataImporterDialog(QDialog):
 
             # Record count controls with bounding box
             count_input = QLineEdit("100")
+            count_input.setTextMargins(4,1,4,1)
             # Add validator for positive integers only
             count_input.setValidator(QIntValidator(1, 999999999, count_input))
             # Connect to role-based validation
@@ -532,6 +539,7 @@ class DataImporterDialog(QDialog):
             fetch_button = QPushButton("Fetch Assay Data")
             fetch_button.setDefault(False)
             fetch_button.setAutoDefault(False)
+            fetch_button.setContentsMargins(0, 4, 0, 0)
             controls_layout.addRow("", fetch_button)
             widgets['fetch_button'] = fetch_button
         
@@ -1495,8 +1503,8 @@ class DataImporterDialog(QDialog):
         # Disable fetch button to prevent multiple requests
         fetch_button.setEnabled(False)
 
-        # Disable all UI controls during loading
-        self._disable_all_controls()
+        # Disable all UI controls during loading for this specific tab
+        self._disable_all_controls(tab_name)
     
     def hide_loading(self, tab_name: str):
         """Hide loading state and re-enable fetch button for the specified tab."""
@@ -1531,44 +1539,43 @@ class DataImporterDialog(QDialog):
         # Re-enable all UI controls after loading
         self._enable_all_controls()
     
-    def _disable_all_controls(self):
-        """Disable all UI controls during API requests except cancel button."""
+    def _disable_all_controls(self, tab_name: str):
+        """Disable all UI controls during API requests except cancel button for the specified tab."""
         # Disable tab switching
         self.tabs.setEnabled(False)
-        
+
         # Disable header buttons
         self.login_button.setEnabled(False)
         self.reset_all_button.setEnabled(False)
-        
-        # Disable all controls in both tabs
-        for tab_name in ['Holes', 'Assays']:
-            tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
-            
-            # Disable filter controls
-            tab_widgets['state_filter'].setEnabled(False)
-            tab_widgets['hole_type_filter'].setEnabled(False)
-            
-            if tab_name == "Holes":
-                tab_widgets['company_filter'].setEnabled(False)
-                tab_widgets['max_depth_input'].setEnabled(False)
-                tab_widgets['count_input'].setEnabled(False)
-            else:  # Assays
-                tab_widgets['element_input'].setEnabled(False)
-                tab_widgets['operator_input'].setEnabled(False)
-                tab_widgets['value_input'].setEnabled(False)
-                tab_widgets['from_depth_input'].setEnabled(False)
-                tab_widgets['to_depth_input'].setEnabled(False)
-                tab_widgets['company_filter'].setEnabled(False)
-                tab_widgets['count_input'].setEnabled(False)
 
-            # Disable bounding box buttons
-            tab_widgets['bbox_button'].setEnabled(False)
-            tab_widgets['bbox_clear_button'].setEnabled(False)
+        # Disable controls only for the specified tab
+        tab_widgets = self.holes_tab if tab_name == "Holes" else self.assays_tab
 
-            # Disable pagination and import buttons
-            tab_widgets['prev_button'].setEnabled(False)
-            tab_widgets['next_button'].setEnabled(False)
-            tab_widgets['import_button'].setEnabled(False)
+        # Disable filter controls
+        tab_widgets['state_filter'].setEnabled(False)
+        tab_widgets['hole_type_filter'].setEnabled(False)
+
+        if tab_name == "Holes":
+            tab_widgets['company_filter'].setEnabled(False)
+            tab_widgets['max_depth_input'].setEnabled(False)
+            tab_widgets['count_input'].setEnabled(False)
+        else:  # Assays
+            tab_widgets['element_input'].setEnabled(False)
+            tab_widgets['operator_input'].setEnabled(False)
+            tab_widgets['value_input'].setEnabled(False)
+            tab_widgets['from_depth_input'].setEnabled(False)
+            tab_widgets['to_depth_input'].setEnabled(False)
+            tab_widgets['company_filter'].setEnabled(False)
+            tab_widgets['count_input'].setEnabled(False)
+
+        # Disable bounding box buttons
+        tab_widgets['bbox_button'].setEnabled(False)
+        tab_widgets['bbox_clear_button'].setEnabled(False)
+
+        # Disable pagination and import buttons
+        tab_widgets['prev_button'].setEnabled(False)
+        tab_widgets['next_button'].setEnabled(False)
+        tab_widgets['import_button'].setEnabled(False)
     
     def _enable_all_controls(self):
         """Re-enable all UI controls after API requests complete."""

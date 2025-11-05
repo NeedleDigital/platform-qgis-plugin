@@ -173,42 +173,78 @@ class Chip(QWidget):
         self.text = text
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 2, 2, 2)
+        layout.setContentsMargins(6, 2, 2, 2)
         layout.setSpacing(4)
 
         self.label = QLabel(text, self)
 
         self.close_button = QPushButton("×", self)
-        self.close_button.setFixedSize(16, 16)
+        self.close_button.setFixedSize(14, 14)
         self.close_button.setDefault(False)
         self.close_button.setAutoDefault(False)
-        self.close_button.setStyleSheet("""
-            QPushButton {
+
+        # Detect theme (dark or light)
+        from qgis.PyQt.QtWidgets import QApplication
+        palette = QApplication.palette()
+        window_color = palette.color(palette.Window)
+        is_dark_theme = window_color.lightness() < 128
+
+        # Theme-aware button styling with proper contrast
+        if is_dark_theme:
+            button_bg = "#E3F2FD"
+            button_hover = "#BBDEFB"
+            button_pressed = "#90CAF9"
+            button_text = "#0D47A1"
+        else:
+            button_bg = "#1976D2"
+            button_hover = "#1565C0"
+            button_pressed = "#0D47A1"
+            button_text = "#FFFFFF"
+
+        self.close_button.setStyleSheet(f"""
+            QPushButton {{
                 font-family: "Arial", sans-serif;
                 font-weight: bold;
-                border-radius: 8px;
-                border: 1px solid #ccc;
-                background-color: #f0f0f0;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
+                border-radius: 7px;
+                border: none;
+                background-color: {button_bg};
+                color: {button_text};
+                font-size: 11px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {button_hover};
+            }}
+            QPushButton:pressed {{
+                background-color: {button_pressed};
+            }}
         """)
         self.close_button.clicked.connect(self._emit_removed_signal)
 
         layout.addWidget(self.label)
         layout.addWidget(self.close_button)
 
-        self.setStyleSheet("""
-            Chip {
-                background-color: #e1e1e1;
-                border-radius: 8px;
-                border: 1px solid #c0c0c0;
-            }
+        # Theme-aware chip styling with blue accent
+        if is_dark_theme:
+            chip_bg = "#0D47A1"
+            chip_border = "#1976D2"
+            chip_text = "#E3F2FD"
+        else:
+            chip_bg = "#E3F2FD"
+            chip_border = "#2196F3"
+            chip_text = "#0D47A1"
+
+        self.setStyleSheet(f"""
+            Chip {{
+                background-color: {chip_bg};
+                border-radius: 10px;
+                border: 1px solid {chip_border};
+            }}
+            Chip QLabel {{
+                color: {chip_text};
+                font-size: 11px;
+                font-weight: 500;
+            }}
         """)
 
     def _emit_removed_signal(self):
@@ -534,23 +570,86 @@ class DynamicSearchFilterWidget(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(4)
 
-        # Create container for search box with loading indicator
+        # Create container for search box with icons
         search_container = QWidget(self)
+        search_container.setFixedHeight(30)
         search_layout = QHBoxLayout(search_container)
         search_layout.setContentsMargins(0, 0, 0, 0)
         search_layout.setSpacing(0)
 
-        self.search_box = QLineEdit(self)
+        # Detect theme for styling
+        from qgis.PyQt.QtWidgets import QApplication
+        palette = QApplication.palette()
+        window_color = palette.color(palette.Window)
+        is_dark_theme = window_color.lightness() < 128
+
+        # Theme-aware colors
+        if is_dark_theme:
+            border_color = "#555555"
+            bg_color = "#2b2b2b"
+            text_color = "#E0E0E0"
+            icon_color = "#888888"
+        else:
+            border_color = "#C0C0C0"
+            bg_color = "#FFFFFF"
+            text_color = "#000000"
+            icon_color = "#666666"
+
+        # Search icon label (left side)
+        self.search_icon = QLabel("🔍", search_container)
+        self.search_icon.setFixedWidth(28)
+        self.search_icon.setAlignment(Qt.AlignCenter)
+        self.search_icon.setStyleSheet(f"""
+            QLabel {{
+                background-color: {bg_color};
+                color: {icon_color};
+                font-size: 12px;
+                padding: 0px;
+                border: 1px solid {border_color};
+                border-right: none;
+                border-top-left-radius: 4px;
+                border-bottom-left-radius: 4px;
+            }}
+        """)
+
+        self.search_box = QLineEdit(search_container)
         self.search_box.setPlaceholderText("Type to search...")
         self.search_box.textChanged.connect(self.textChanged.emit)
-        search_layout.addWidget(self.search_box)
+        self.search_box.setStyleSheet(f"""
+            QLineEdit {{
+                padding: 6px 8px;
+                border: 1px solid {border_color};
+                border-left: none;
+                border-right: none;
+                background-color: {bg_color};
+                color: {text_color};
+                font-size: 13px;
+            }}
+            QLineEdit:hover {{
+                border-color: {border_color};
+            }}
+            QLineEdit:focus {{
+                border-color: {border_color};
+                outline: none;
+            }}
+        """)
 
-        # Create loading indicator (circular spinner)
+        # Create loading indicator (circular spinner) - positioned on the right
         self.loading_label = QLabel(self)
-        self.loading_label.setFixedSize(20, 20)
+        self.loading_label.setFixedSize(30, 30)
         self.loading_label.setAlignment(Qt.AlignCenter)
         self.loading_label.setVisible(False)
-        self.loading_label.setStyleSheet("padding: 2px;")
+        self.loading_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {bg_color};
+                color: red;
+                font-size: 24px;
+                border: 1px solid {border_color};
+                border-left: none;
+                border-top-right-radius: 4px;
+                border-bottom-right-radius: 4px;
+            }}
+        """)
 
         # Create a simple animated loading indicator using Unicode spinner
         self.loading_timer = QTimer(self)
@@ -558,9 +657,27 @@ class DynamicSearchFilterWidget(QWidget):
         self.loading_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
         self.loading_frame_index = 0
 
-        # Position loading indicator inside the search box using a widget overlay approach
-        # We'll add it to the search_box layout by styling instead
+        # Dropdown arrow icon label (right side, hidden when loading)
+        self.dropdown_icon = QLabel("▼", search_container)
+        self.dropdown_icon.setFixedWidth(28)
+        self.dropdown_icon.setAlignment(Qt.AlignCenter)
+        self.dropdown_icon.setStyleSheet(f"""
+            QLabel {{
+                background-color: {bg_color};
+                color: {icon_color};
+                font-size: 10px;
+                padding: 0px;
+                border: 1px solid {border_color};
+                border-left: none;
+                border-top-right-radius: 4px;
+                border-bottom-right-radius: 4px;
+            }}
+        """)
+
+        search_layout.addWidget(self.search_icon)
+        search_layout.addWidget(self.search_box)
         search_layout.addWidget(self.loading_label)
+        search_layout.addWidget(self.dropdown_icon)
 
         main_layout.addWidget(search_container)
 
@@ -713,6 +830,7 @@ class DynamicSearchFilterWidget(QWidget):
 
     def show_loading(self):
         """Show loading indicator and start animation."""
+        self.dropdown_icon.setVisible(False)
         self.loading_label.setVisible(True)
         self.loading_frame_index = 0
         self.loading_timer.start(100)  # Update every 100ms
@@ -721,6 +839,7 @@ class DynamicSearchFilterWidget(QWidget):
         """Hide loading indicator and stop animation."""
         self.loading_timer.stop()
         self.loading_label.setVisible(False)
+        self.dropdown_icon.setVisible(True)
 
     def _update_loading_animation(self):
         """Update the loading animation frame."""
@@ -728,27 +847,157 @@ class DynamicSearchFilterWidget(QWidget):
         self.loading_frame_index = (self.loading_frame_index + 1) % len(self.loading_frames)
 
     def has_unselected_text(self):
-        """Check if there's text in the search box that hasn't been selected."""
-        return bool(self.search_box.text().strip())
+        """Check if there's text in the search box that hasn't been selected.
+
+        Returns True only if there's text AND no items are selected.
+        If items are selected, the text will be cleared automatically.
+        """
+        has_text = bool(self.search_box.text().strip())
+        has_selections = bool(self._selected_items)
+
+        # Only return True if there's text but NO selections
+        return has_text and not has_selections
+
+    def clear_search_text(self):
+        """Clear the search text field."""
+        self.search_box.clear()
 
 class SearchableStaticFilterWidget(QWidget):
     """A widget for searchable static data with chip display (no API calls)."""
 
     selectionChanged = pyqtSignal(list)
 
-    def __init__(self, static_data=None, parent=None):
+    def __init__(self, static_data=None, parent=None, show_all_chips=False, show_search_icon=True):
         super().__init__(parent)
         self._selected_items = {}
         self._static_data = static_data or []  # List of strings or tuples (display, value)
+        self._show_all_chips = show_all_chips  # Control whether to show all chips or limit to 4
+        self._show_search_icon = show_search_icon  # Control whether to show search icon
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(4)
 
-        self.search_box = QLineEdit(self)
-        self.search_box.setPlaceholderText("Type to search...")
+        # Create a container for the search box with icons
+        search_container = QWidget(self)
+        search_container.setFixedHeight(30)
+        search_layout = QHBoxLayout(search_container)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(0)
+
+        # Detect theme for styling
+        from qgis.PyQt.QtWidgets import QApplication
+        palette = QApplication.palette()
+        window_color = palette.color(palette.Window)
+        is_dark_theme = window_color.lightness() < 128
+
+        # Theme-aware colors
+        if is_dark_theme:
+            border_color = "#555555"
+            bg_color = "#2b2b2b"
+            text_color = "#E0E0E0"
+            placeholder_color = "#888888"
+            hover_border = "#2196F3"
+            focus_border = "#1976D2"
+            icon_color = "#888888"
+        else:
+            border_color = "#C0C0C0"
+            bg_color = "#FFFFFF"
+            text_color = "#000000"
+            placeholder_color = "#999999"
+            hover_border = "#2196F3"
+            focus_border = "#1976D2"
+            icon_color = "#666666"
+
+        # Search icon label (left side) - conditionally shown
+        if self._show_search_icon:
+            self.search_icon = QLabel("🔍", search_container)
+            self.search_icon.setFixedWidth(28)
+            self.search_icon.setAlignment(Qt.AlignCenter)
+            self.search_icon.setStyleSheet(f"""
+                QLabel {{
+                    background-color: {bg_color};
+                    color: {icon_color};
+                    font-size: 12px;
+                    padding: 0px;
+                    border: 1px solid {border_color};
+                    border-right: none;
+                    border-top-left-radius: 4px;
+                    border-bottom-left-radius: 4px;
+                }}
+            """)
+
+        self.search_box = QLineEdit(search_container)
+        self.search_box.setPlaceholderText("Click to select or type to search...")
         self.search_box.textChanged.connect(self._on_search_text_changed)
-        main_layout.addWidget(self.search_box)
+
+        # Adjust search box borders based on whether search icon is shown
+        if self._show_search_icon:
+            search_box_style = f"""
+                QLineEdit {{
+                    padding: 6px 8px;
+                    border: 1px solid {border_color};
+                    border-left: none;
+                    border-right: none;
+                    background-color: {bg_color};
+                    color: {text_color};
+                    font-size: 13px;
+                }}
+                QLineEdit:hover {{
+                    border-color: {border_color};
+                }}
+                QLineEdit:focus {{
+                    border-color: {border_color};
+                    outline: none;
+                }}
+            """
+        else:
+            search_box_style = f"""
+                QLineEdit {{
+                    padding: 6px 8px;
+                    border: 1px solid {border_color};
+                    border-right: none;
+                    border-top-left-radius: 4px;
+                    border-bottom-left-radius: 4px;
+                    background-color: {bg_color};
+                    color: {text_color};
+                    font-size: 13px;
+                }}
+                QLineEdit:hover {{
+                    border-color: {border_color};
+                }}
+                QLineEdit:focus {{
+                    border-color: {border_color};
+                    outline: none;
+                }}
+            """
+
+        self.search_box.setStyleSheet(search_box_style)
+
+        # Dropdown arrow icon label (right side)
+        self.dropdown_icon = QLabel("▼", search_container)
+        self.dropdown_icon.setFixedWidth(28)
+        self.dropdown_icon.setAlignment(Qt.AlignCenter)
+        self.dropdown_icon.setStyleSheet(f"""
+            QLabel {{
+                background-color: {bg_color};
+                color: {icon_color};
+                font-size: 10px;
+                padding: 0px;
+                border: 1px solid {border_color};
+                border-left: none;
+                border-top-right-radius: 4px;
+                border-bottom-right-radius: 4px;
+            }}
+        """)
+
+        # Add widgets to layout based on whether search icon is shown
+        if self._show_search_icon:
+            search_layout.addWidget(self.search_icon)
+        search_layout.addWidget(self.search_box)
+        search_layout.addWidget(self.dropdown_icon)
+
+        main_layout.addWidget(search_container)
 
         # Store original mouse press event
         self._original_mouse_press_event = self.search_box.mousePressEvent
@@ -756,17 +1005,65 @@ class SearchableStaticFilterWidget(QWidget):
         self.search_box.mousePressEvent = self._on_search_box_mouse_press
 
         self.chip_container = QWidget(self)
-        self.chip_layout = FlowLayout(self.chip_container, spacing=4)
+        self.chip_layout = FlowLayout(self.chip_container, spacing=6)
         self.chip_container.setVisible(False)
         main_layout.addWidget(self.chip_container)
 
         self.popup = QDialog(self, Qt.Popup)
         self.popup_layout = QVBoxLayout(self.popup)
+        self.popup_layout.setContentsMargins(0, 0, 0, 0)
+        self.popup_layout.setSpacing(0)
+
         self.results_list = QListView(self.popup)
         self.results_list.setModel(QStandardItemModel(self.results_list))
         self.results_list.clicked.connect(self.onResultClicked)
         # Prevent the list from taking keyboard focus
         self.results_list.setFocusPolicy(Qt.NoFocus)
+
+        # Enhanced popup styling with theme-awareness
+        if is_dark_theme:
+            popup_bg = "#2b2b2b"
+            popup_border = "#555555"
+            item_text = "#E0E0E0"
+            item_hover_bg = "#0D47A1"
+            item_selected_bg = "#1565C0"
+        else:
+            popup_bg = "#FFFFFF"
+            popup_border = "#C0C0C0"
+            item_text = "#000000"
+            item_hover_bg = "#E3F2FD"
+            item_selected_bg = "#BBDEFB"
+
+        self.popup.setStyleSheet(f"""
+            QDialog {{
+                background-color: {popup_bg};
+                border: 1px solid {popup_border};
+                border-radius: 4px;
+            }}
+        """)
+
+        self.results_list.setStyleSheet(f"""
+            QListView {{
+                background-color: {popup_bg};
+                color: {item_text};
+                border: none;
+                outline: none;
+                padding: 4px;
+                font-size: 13px;
+            }}
+            QListView::item {{
+                padding: 8px 10px;
+                border-radius: 3px;
+                margin: 2px;
+            }}
+            QListView::item:hover {{
+                background-color: {item_hover_bg};
+            }}
+            QListView::item:selected {{
+                background-color: {item_selected_bg};
+            }}
+        """)
+
         self.popup_layout.addWidget(self.results_list)
         self.popup.setMinimumWidth(300)
         # Prevent the popup dialog from taking keyboard focus
@@ -925,6 +1222,11 @@ class SearchableStaticFilterWidget(QWidget):
         self._selected_items = {item: item for item in data_list}
         self._updateChips()
 
+    def set_show_all_chips(self, show_all):
+        """Set whether to show all chips or limit to 4."""
+        self._show_all_chips = show_all
+        self._updateChips()  # Refresh display
+
     def eventFilter(self, obj, event):
         """Event filter to redirect keyboard events from popup to search box."""
         if obj == self.popup or obj == self.results_list:
@@ -956,8 +1258,20 @@ class SearchableStaticFilterWidget(QWidget):
             self.selectionChanged.emit(self.currentData())
 
     def has_unselected_text(self):
-        """Check if there's text in the search box that hasn't been selected."""
-        return bool(self.search_box.text().strip())
+        """Check if there's text in the search box that hasn't been selected.
+
+        Returns True only if there's text AND no items are selected.
+        If items are selected, the text will be cleared automatically.
+        """
+        has_text = bool(self.search_box.text().strip())
+        has_selections = bool(self._selected_items)
+
+        # Only return True if there's text but NO selections
+        return has_text and not has_selections
+
+    def clear_search_text(self):
+        """Clear the search text field."""
+        self.search_box.clear()
 
 class StaticFilterWidget(QWidget):
     """A composite widget that combines a CheckableComboBox with a chip container."""

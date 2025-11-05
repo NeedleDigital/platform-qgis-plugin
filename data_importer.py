@@ -405,6 +405,7 @@ class DataImporter:
     def _validate_filter_selections(self, tab_name):
         """
         Validate that all filter widgets with text have selections made.
+        If selections exist but there's leftover text, clear the text automatically.
 
         Returns:
             str: Error message if validation fails, None if valid
@@ -415,12 +416,20 @@ class DataImporter:
         # Check company name filter
         if hasattr(tab_widgets['company_filter'], 'has_unselected_text'):
             if tab_widgets['company_filter'].has_unselected_text():
+                # Text exists but no selections - this is an error
                 errors.append("Company Name: You have entered text but haven't selected a company from the list.")
+            elif hasattr(tab_widgets['company_filter'], 'clear_search_text') and tab_widgets['company_filter'].search_box.text().strip():
+                # Has selections but also has leftover text - clear it automatically
+                tab_widgets['company_filter'].clear_search_text()
 
         # Check hole type filter
         if hasattr(tab_widgets['hole_type_filter'], 'has_unselected_text'):
             if tab_widgets['hole_type_filter'].has_unselected_text():
+                # Text exists but no selections - this is an error
                 errors.append("Hole Type: You have entered text but haven't selected a hole type from the list.")
+            elif hasattr(tab_widgets['hole_type_filter'], 'clear_search_text') and tab_widgets['hole_type_filter'].search_box.text().strip():
+                # Has selections but also has leftover text - clear it automatically
+                tab_widgets['hole_type_filter'].clear_search_text()
 
         if errors:
             error_msg = "Please complete your filter selections:\n\n"
