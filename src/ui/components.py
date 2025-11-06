@@ -795,7 +795,8 @@ class DynamicSearchFilterWidget(QWidget):
 
     def setCurrentData(self, data_list):
         """Set the current selection by data values."""
-        self._selected_items = {item: item for item in data_list}
+        # Filter out empty strings to avoid empty chips
+        self._selected_items = {item: item for item in data_list if item}
         self._updateChips()
 
     def eventFilter(self, obj, event):
@@ -1226,7 +1227,8 @@ class SearchableStaticFilterWidget(QWidget):
 
     def setCurrentData(self, data_list):
         """Set the current selection by data values."""
-        self._selected_items = {item: item for item in data_list}
+        # Filter out empty strings to avoid empty chips
+        self._selected_items = {item: item for item in data_list if item}
         self._updateChips()
 
     def set_show_all_chips(self, show_all):

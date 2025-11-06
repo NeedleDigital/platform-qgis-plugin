@@ -1622,11 +1622,14 @@ class DataImporterDialog(QDialog):
         
         # Reset state filter to "All States" (first item, empty value)
         holes_tab['state_filter'].setCurrentData([""])
+        # Clear any leftover text in states filter search box
+        if hasattr(holes_tab['state_filter'], 'search_box'):
+            holes_tab['state_filter'].search_box.clear()
 
         # Reset hole type filter - clear all selections and search box
         holes_tab['hole_type_filter'].setCurrentData([])
         holes_tab['hole_type_filter'].search_box.clear()
-        
+
         # Reset company filter
         holes_tab['company_filter'].setCurrentData([])
         holes_tab['company_filter'].search_box.clear()
@@ -1642,11 +1645,14 @@ class DataImporterDialog(QDialog):
         # Clear bounding box selection for Holes
         self._clear_bbox_selection("Holes")
 
-        # Reset Assays tab filters  
+        # Reset Assays tab filters
         assays_tab = self.assays_tab
-        
+
         # Reset state filter to "All States" (first item, empty value)
         assays_tab['state_filter'].setCurrentData([""])
+        # Clear any leftover text in states filter search box
+        if hasattr(assays_tab['state_filter'], 'search_box'):
+            assays_tab['state_filter'].search_box.clear()
 
         # Reset hole type filter - clear all selections and search box
         assays_tab['hole_type_filter'].setCurrentData([])

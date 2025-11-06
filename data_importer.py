@@ -21,6 +21,7 @@ License: GPL-3.0+
 """
 
 import os
+import time
 from qgis.PyQt.QtCore import QTranslator, QCoreApplication, qVersion
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
@@ -246,6 +247,7 @@ class DataImporter:
         self.data_manager.error_occurred.connect(self.dlg.hide_cancel_button)  # Hide cancel button on error
         self.data_manager.loading_started.connect(self.dlg.show_loading)  # Show loading state
         self.data_manager.loading_finished.connect(self.dlg.hide_loading)  # Hide loading state
+        self.data_manager.loading_finished.connect(self.dlg.hide_cancel_button)  # Hide cancel button when loading finished
         self.data_manager.companies_search_results.connect(self.dlg.handle_company_search_results)  # Company search results
         self.data_manager.login_required.connect(self._handle_login_required)  # Direct login dialog when auth needed
         
@@ -352,14 +354,48 @@ class DataImporter:
     def _handle_login_failed(self, error_message):
         """Handle failed login."""
         try:
+            # Log the error to Python console
+            print(f"\n[ND Plugin] ===== LOGIN FAILED =====")
+            print(f"[ND Plugin] Error: {error_message}")
+
             self.dlg.update_progress(0)
             self.dlg.update_status("Authentication failed.")
-            
-            if self.login_dlg:
+
+            # Check for USER_DISABLED error (Firebase account disabled)
+            if "USER_DISABLED" in error_message:
+                # Force logout
+                self._handle_logout_request()
+
+                # Show critical error dialog
+                from qgis.PyQt.QtWidgets import QMessageBox
+                QMessageBox.critical(
+                    self.dlg,
+                    "Account Disabled",
+                    "Your account has been disabled.\n\n"
+                    "Possible reasons:\n"
+                    "• Subscription or license expired\n"
+                    "• Account flagged for security reasons\n\n"
+                    "Please contact Needle Digital support:\n"
+                    "Email: divyansh@needle-digital.com\n\n"
+                )
+            # Check if this is a subscription expiration error
+            elif "subscription has expired" in error_message.lower():
+                # Force logout for expired subscription
+                self._handle_logout_request()
+
+                # Show prominent error message to user
+                from qgis.PyQt.QtWidgets import QMessageBox
+                QMessageBox.critical(
+                    self.dlg,
+                    "Subscription Expired",
+                    error_message + "\n\nYou have been logged out. Please contact divyansh@needle-digital.com to renew your subscription."
+                )
+            elif self.login_dlg:
+                # Normal login failure - show in login dialog
                 self.login_dlg.on_login_result(False, f"Login Failed: {error_message}")
-            
+
             log_warning(f"Login failed: {error_message}")
-            
+
         except Exception as e:
             log_error(f"Login failure handler error: {str(e)}")
 
@@ -373,12 +409,37 @@ class DataImporter:
             log_error(f"UI update error: {str(e)}")
 
     def _validate_token_and_logout_if_expired(self):
-        """Validate token and automatically logout if expired."""
+        """
+        Validate token and automatically logout if expired.
+
+        This method is called when the dialog is shown, handling cases where:
+        - User opens plugin after laptop sleep/wake
+        - Token expired while plugin was inactive
+        - Subscription (custom expiresAt) has expired
+
+        It will attempt to refresh the token if possible, or logout if not.
+        """
         try:
-            if not self.data_manager.is_authenticated():
-                # Token is expired or invalid, logout user
+            # Try to ensure token is valid (will refresh if needed and possible)
+            if not self.data_manager.api_client.ensure_token_valid():
+                # Token validation failed - could be expired JWT or subscription
+                custom_expires_at = self.data_manager.api_client.custom_expires_at
+
+                # Check if subscription expired
+                if custom_expires_at is not None:
+                    if time.time() >= custom_expires_at:
+                        # Subscription expired - force logout
+                        self._handle_logout_request()
+                        if self.dlg:
+                            self.dlg.show_plugin_message(
+                                "Your subscription has expired. Please contact support or renew your subscription.",
+                                "warning",
+                                6000
+                            )
+                        return
+
+                # Token expired and couldn't refresh - logout user
                 self._handle_logout_request()
-                # Show message about session expiration
                 if self.dlg:
                     self.dlg.show_plugin_message("Session expired. Please log in again.", "warning", 4000)
         except Exception as e:

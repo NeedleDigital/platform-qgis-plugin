@@ -188,6 +188,55 @@ def get_user_role_from_token(token: str) -> Optional[str]:
 
     return None
 
+def get_custom_expires_at_from_token(token: str) -> Optional[float]:
+    """
+    Extract custom expiresAt timestamp from JWT token.
+
+    This is a custom claim used for subscription/license management.
+    The expiresAt field controls how long a user can access the plugin,
+    independent of Firebase's standard 1-hour JWT expiration.
+
+    Args:
+        token: JWT token string
+
+    Returns:
+        Unix timestamp (float) of when the user's access expires, or None if not found
+    """
+    payload = decode_jwt_token(token)
+    if not payload:
+        return None
+
+    # Try different possible locations for the expiresAt claim
+    # Check root level first
+    expires_at = payload.get('expiresAt')
+    if expires_at is not None:
+        try:
+            return float(expires_at)
+        except (ValueError, TypeError):
+            pass
+
+    # Check custom claims
+    custom_claims = payload.get('custom_claims', {})
+    if isinstance(custom_claims, dict):
+        expires_at = custom_claims.get('expiresAt')
+        if expires_at is not None:
+            try:
+                return float(expires_at)
+            except (ValueError, TypeError):
+                pass
+
+    # Check claims at root level
+    claims = payload.get('claims', {})
+    if isinstance(claims, dict):
+        expires_at = claims.get('expiresAt')
+        if expires_at is not None:
+            try:
+                return float(expires_at)
+            except (ValueError, TypeError):
+                pass
+
+    return None
+
 def format_column_name(column_name: str) -> str:
     """
     Format column name from snake_case to Title Case for display.

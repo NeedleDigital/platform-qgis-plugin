@@ -50,7 +50,7 @@ from qgis.core import QgsSettings
 # Internal configuration and utilities
 from ..config.settings import config  # API configuration and settings
 from ..utils.logging import log_error, log_warning, log_info  # Centralized logging system
-from ..utils.validation import get_user_role_from_token  # JWT token utilities
+from ..utils.validation import get_user_role_from_token, get_custom_expires_at_from_token  # JWT token utilities
 
 
 class ApiClient(QObject):
@@ -92,6 +92,7 @@ class ApiClient(QObject):
         self.auth_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
         self.token_expires_at: float = 0
+        self.custom_expires_at: Optional[float] = None  # Custom subscription expiration from JWT
         self.user_role: Optional[str] = None  # User role from token (tier_1, tier_2, admin)
         self.last_login_email: str = ""  # Store last successful login email for autofill
         self._initialization_complete = False
@@ -103,15 +104,16 @@ class ApiClient(QObject):
         # Token refresh timer
         self.token_refresh_timer = QTimer()
         self.token_refresh_timer.timeout.connect(lambda: self.refresh_auth_token(silent=True))
-        
+
         # Load saved tokens and expiration time but don't refresh immediately
         settings = QgsSettings()
         self.refresh_token = settings.value("needle/refreshToken", None)
         self.auth_token = settings.value("needle/authToken", None)
 
-        # Extract role from stored token if available
+        # Extract role and custom expiration from stored token if available
         if self.auth_token:
             self.user_role = get_user_role_from_token(self.auth_token)
+            self.custom_expires_at = get_custom_expires_at_from_token(self.auth_token)
 
         # Safely load token expiration time
         try:
@@ -119,9 +121,73 @@ class ApiClient(QObject):
             self.token_expires_at = float(expires_value) if expires_value else 0
         except (ValueError, TypeError):
             self.token_expires_at = 0
-    
+
+        # Safely load custom expiration time
+        try:
+            custom_expires_value = settings.value("needle/customExpiresAt", None)
+            if custom_expires_value:
+                self.custom_expires_at = float(custom_expires_value)
+        except (ValueError, TypeError):
+            self.custom_expires_at = None
+
+    def _log_request(self, method: str, url: str, params: Optional[Dict] = None, headers: Optional[Dict] = None):
+        """Log API request details to Python console for debugging."""
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        print(f"\n{'='*80}")
+        print(f"[ND Plugin] API REQUEST: {method} {url}")
+        print(f"[ND Plugin] Time: {timestamp}")
+
+        if params:
+            # Sanitize sensitive data
+            safe_params = params.copy()
+            if 'password' in safe_params:
+                safe_params['password'] = '***REDACTED***'
+            print(f"[ND Plugin] Params: {json.dumps(safe_params, indent=2)}")
+
+        if headers:
+            # Sanitize authorization header
+            safe_headers = headers.copy()
+            if 'Authorization' in safe_headers:
+                token = safe_headers['Authorization'].replace('Bearer ', '')
+                safe_headers['Authorization'] = f'Bearer {token[:20]}...{token[-10:] if len(token) > 30 else ""}'
+            print(f"[ND Plugin] Headers: {json.dumps(safe_headers, indent=2)}")
+
+        print(f"{'='*80}\n")
+
+    def _log_response(self, url: str, status_code: Optional[int], response_body: Any, elapsed_ms: float, error: bool = False):
+        """Log API response details to Python console for debugging."""
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        status_text = "ERROR" if error else "SUCCESS"
+
+        print(f"\n{'-'*80}")
+        print(f"[ND Plugin] API RESPONSE: {status_text}")
+        print(f"[ND Plugin] URL: {url}")
+        print(f"[ND Plugin] Time: {timestamp}")
+        print(f"[ND Plugin] Status: HTTP {status_code if status_code else 'N/A'} ({elapsed_ms:.0f}ms)")
+
+        # Log response body (truncate if too large)
+        if response_body:
+            if isinstance(response_body, dict):
+                body_str = json.dumps(response_body, indent=2)
+            else:
+                body_str = str(response_body)
+
+            # Truncate large responses
+            if len(body_str) > 500:
+                print(f"[ND Plugin] Response Body (truncated): {body_str[:500]}...")
+                print(f"[ND Plugin] (Full response size: {len(body_str)} characters)")
+            else:
+                print(f"[ND Plugin] Response Body: {body_str}")
+
+        print(f"{'-'*80}\n")
+
     def complete_initialization(self):
-        """Complete initialization and attempt silent token refresh if needed."""
+        """
+        Complete initialization and attempt silent token refresh if needed.
+
+        This is called after plugin startup and handles token refresh after laptop sleep/wake
+        or plugin restart. It will refresh expired tokens automatically if refresh token is valid.
+        """
         if self._initialization_complete:
             return
 
@@ -129,11 +195,23 @@ class ApiClient(QObject):
 
         # Check if we have a refresh token
         if self.refresh_token:
-            # Check if access token is expired or will expire soon
-            time_until_expiry = self.token_expires_at - time.time()
+            current_time = time.time()
 
-            if time_until_expiry < 60:  # Expired or expiring in <1 minute
-                log_info(f"Token expired/expiring soon, attempting silent refresh...")
+            # Check custom subscription expiration first
+            if self.custom_expires_at is not None and current_time >= self.custom_expires_at:
+                log_warning(f"Custom subscription expired at {time.ctime(self.custom_expires_at)} - user must re-login")
+                return
+
+            # Check if access token is expired or will expire soon
+            time_until_expiry = self.token_expires_at - current_time
+
+            # Refresh if token is expired or will expire in <5 minutes
+            # This handles cases where laptop was closed and token expired during sleep
+            if time_until_expiry < 300:  # Less than 5 minutes remaining (or already expired)
+                if time_until_expiry < 0:
+                    log_info(f"Token expired {abs(time_until_expiry)/60:.1f} minutes ago, attempting silent refresh...")
+                else:
+                    log_info(f"Token expiring in {time_until_expiry:.0f}s, attempting silent refresh...")
                 self.refresh_auth_token(silent=True)
             else:
                 log_info(f"Token still valid for {time_until_expiry/60:.1f} minutes")
@@ -145,8 +223,28 @@ class ApiClient(QObject):
             log_warning("No refresh token found - user must login")
     
     def is_authenticated(self) -> bool:
-        """Check if user is currently authenticated."""
-        return bool(self.auth_token and time.time() < self.token_expires_at)
+        """
+        Check if user is currently authenticated.
+
+        Validates both Firebase JWT expiration (1 hour) and custom subscription
+        expiration (expiresAt claim). User must pass both checks to be authenticated.
+
+        Returns:
+            True if both Firebase token and custom subscription are valid, False otherwise
+        """
+        current_time = time.time()
+
+        # Check if auth token exists and Firebase JWT hasn't expired
+        if not self.auth_token or current_time >= self.token_expires_at:
+            return False
+
+        # Check custom subscription expiration if it exists
+        if self.custom_expires_at is not None:
+            if current_time >= self.custom_expires_at:
+                log_warning(f"Custom subscription expired at {time.ctime(self.custom_expires_at)}")
+                return False
+
+        return True
 
     def get_user_role(self) -> Optional[str]:
         """Get the current user's role."""
@@ -158,9 +256,21 @@ class ApiClient(QObject):
         return settings.value("needle/lastLoginEmail", "")
 
     def ensure_token_valid(self) -> bool:
-        """Ensure token is valid, refresh if needed. Returns True if valid/refreshed."""
+        """
+        Ensure token is valid, refresh if needed.
+
+        Returns:
+            True if valid/refreshed, False if custom subscription has expired
+        """
+        current_time = time.time()
+
+        # Check custom subscription expiration first - can't refresh if subscription expired
+        if self.custom_expires_at is not None and current_time >= self.custom_expires_at:
+            log_warning(f"Cannot refresh token - custom subscription expired at {time.ctime(self.custom_expires_at)}")
+            return False
+
         # Check if token will expire in next 5 minutes
-        time_until_expiry = self.token_expires_at - time.time()
+        time_until_expiry = self.token_expires_at - current_time
 
         if time_until_expiry < 300:  # Less than 5 minutes remaining
             log_info(f"Token expiring soon ({time_until_expiry:.0f}s), triggering proactive refresh...")
@@ -184,6 +294,12 @@ class ApiClient(QObject):
             "returnSecureToken": True
         }
 
+        # Log the login request
+        print(f"\n[ND Plugin] ===== LOGIN ATTEMPT =====")
+        print(f"[ND Plugin] Email: {email}")
+        print(f"[ND Plugin] Endpoint: {config.firebase_auth_url}")
+        self._log_request("POST", config.firebase_auth_url, params={"email": email, "password": "***REDACTED***"})
+
         self._make_request(
             url=config.firebase_auth_url,
             method="POST",
@@ -197,6 +313,7 @@ class ApiClient(QObject):
         self.auth_token = None
         self.refresh_token = None
         self.token_expires_at = 0
+        self.custom_expires_at = None
         self.user_role = None
         self.last_login_email = ""
         self.token_refresh_timer.stop()
@@ -206,6 +323,7 @@ class ApiClient(QObject):
         settings.remove("needle/refreshToken")
         settings.remove("needle/authToken")
         settings.remove("needle/tokenExpiresAt")
+        settings.remove("needle/customExpiresAt")
         settings.remove("needle/lastLoginEmail")
 
         # Cancel any ongoing requests
@@ -240,13 +358,24 @@ class ApiClient(QObject):
         )
     
     def make_api_request(self, endpoint: str, params: Dict[str, Any], callback: Optional[Callable] = None) -> None:
-        """Make authenticated API request to Needle Digital service."""
-        if not self.is_authenticated():
-            self.api_error_occurred.emit(endpoint, "Authentication required")
+        """
+        Make authenticated API request to Needle Digital service.
+
+        Automatically refreshes token if needed before making the request.
+        """
+        
+        # Ensure token is valid and refresh if needed (handles wake from sleep)
+        if not self.ensure_token_valid():
+            error_msg = "Authentication expired. Please log in again."
+            if self.custom_expires_at and time.time() >= self.custom_expires_at:
+                error_msg = "Your subscription has expired. Please contact support or renew your subscription."
+            self.api_error_occurred.emit(endpoint, error_msg)
             return
 
         url = f"{config.BASE_API_URL}/{endpoint}"
         headers = {"Authorization": f"Bearer {self.auth_token}"}
+        
+        
 
         self._make_request(
             url=url,
@@ -265,6 +394,8 @@ class ApiClient(QObject):
         """
         Make authenticated streaming API request using Server-Sent Events (SSE).
 
+        Automatically refreshes token if needed before making the request.
+
         Args:
             endpoint: API endpoint path
             params: Query parameters dictionary
@@ -276,8 +407,17 @@ class ApiClient(QObject):
         Returns:
             QNetworkReply: The active network reply (for cancellation support)
         """
-        if not self.is_authenticated():
-            error_callback({"error": "Authentication required"})
+        
+                
+        print(f'-------- {self.ensure_token_valid()}')
+        print(f'-------- {self.auth_token}')
+        
+        # Ensure token is valid and refresh if needed (handles wake from sleep)
+        if not self.ensure_token_valid():
+            error_msg = "Authentication expired. Please log in again."
+            if self.custom_expires_at and time.time() >= self.custom_expires_at:
+                error_msg = "Your subscription has expired. Please contact support or renew your subscription."
+            error_callback({"error": error_msg})
             return None
 
         url = f"{config.BASE_API_URL}/{endpoint}"
@@ -324,6 +464,9 @@ class ApiClient(QObject):
         reply.complete_callback = complete_callback
         reply.error_callback = error_callback
 
+        # Store error response body (will be populated if error occurs)
+        reply.error_response_body = None
+
         # Connect streaming event handlers
         reply.readyRead.connect(lambda: self._handle_streaming_data(reply))
         reply.finished.connect(lambda: self._handle_streaming_finished(reply))
@@ -340,6 +483,21 @@ class ApiClient(QObject):
             chunk_bytes = bytes(reply.readAll())
             if not chunk_bytes:
                 return
+
+            # Check if this is an HTTP error response (not SSE)
+            http_status = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
+            if http_status and http_status >= 400:
+                # This is an error response - store the raw bytes for error handler
+                error_text = chunk_bytes.decode('utf-8', errors='ignore')
+
+                # Append to any existing error response body
+                if hasattr(reply, 'error_response_body') and reply.error_response_body:
+                    reply.error_response_body += error_text
+                else:
+                    reply.error_response_body = error_text
+
+                print(f"[ND Plugin] Captured error response body: {error_text[:200]}")
+                return  # Don't process as SSE
 
             # Check for gzip encoding on first chunk using rawHeader
             if self._streaming_decompressors.get(reply_id) is None:
@@ -455,8 +613,76 @@ class ApiClient(QObject):
                 pass
 
     def _handle_streaming_finished(self, reply: QNetworkReply) -> None:
-        """Handle completion of streaming connection."""
+        """
+        Handle completion of streaming connection.
+
+        This is called for both successful and failed requests.
+        For errors, we need to check HTTP status and parse error response.
+        """
         reply_id = id(reply)
+
+        # Check for HTTP errors (like 403) that might not trigger errorOccurred
+        http_status = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
+
+        # If there's an HTTP error status, check for detailed error message
+        if http_status and http_status >= 400:
+            # Use stored error response body from errorOccurred handler
+            # (it was already read there to prevent it from being consumed)
+            response_text = getattr(reply, 'error_response_body', None)
+
+            # If not stored, try reading it now (fallback)
+            if not response_text:
+                response_bytes = bytes(reply.readAll())
+                response_text = response_bytes.decode('utf-8', errors='ignore') if response_bytes else ""
+
+            print("\n[ND Plugin] ===== STREAMING FINISHED WITH ERROR =====")
+            print(f"[ND Plugin] URL: {reply.url().toString()}")
+            print(f"[ND Plugin] HTTP Status: {http_status}")
+            print(f"[ND Plugin] Response Body: {response_text[:500] if response_text else 'Empty'}")
+            print(f"[ND Plugin] Using stored response: {getattr(reply, 'error_response_body', None) is not None}")
+
+            # Parse error response
+            detailed_error_msg = None
+            try:
+                if response_text:
+                    error_data = json.loads(response_text)
+
+                    # Check for FastAPI/Pydantic error format: {"detail": "..."}
+                    if 'detail' in error_data:
+                        detail = error_data['detail']
+
+                        # Check for "User access expired" error
+                        if isinstance(detail, str) and 'access expired' in detail.lower():
+                            detailed_error_msg = "Your subscription has expired. Please contact Needle Digital support to renew your access."
+                            print("[ND Plugin] SUBSCRIPTION EXPIRED ERROR DETECTED")
+                            # Don't emit login_failed here - let error callback handle it to avoid duplicate dialogs
+                        else:
+                            detailed_error_msg = str(detail)
+
+                    # Check for Firebase error format
+                    elif 'error' in error_data:
+                        error_obj = error_data['error']
+                        if isinstance(error_obj, dict):
+                            detailed_error_msg = error_obj.get('message', str(error_obj))
+                        else:
+                            detailed_error_msg = str(error_obj)
+
+                    print(f"[ND Plugin] Parsed Error: {detailed_error_msg}")
+
+            except (json.JSONDecodeError, Exception) as e:
+                print(f"[ND Plugin] Failed to parse error response: {e}")
+
+            # Use detailed error message if available
+            if detailed_error_msg:
+                error_msg = detailed_error_msg
+            else:
+                error_msg = reply.errorString() if reply.error() != QNetworkReply.NoError else f"HTTP {http_status} error"
+
+            log_error(f"Streaming finished with HTTP {http_status} error: {error_msg}")
+
+            # Call error callback if it exists
+            if hasattr(reply, 'error_callback'):
+                reply.error_callback({"error": error_msg, "http_status": http_status, "is_fatal": True})
 
         # Cleanup all tracking structures
         if reply in self._active_replies:
@@ -471,11 +697,25 @@ class ApiClient(QObject):
         reply.deleteLater()
 
     def _handle_streaming_error(self, reply: QNetworkReply, error_code) -> None:
-        """Handle streaming connection errors."""
+        """
+        Handle streaming connection errors.
+
+        NOTE: Error response body is captured in _handle_streaming_data() when data arrives.
+        This handler just logs the error. The 'finished' handler will parse and display the error.
+        """
         if reply.error() != QNetworkReply.NoError:
             error_msg = reply.errorString()
-            log_error(f"Streaming network error: {error_msg}")
-            reply.error_callback({"error": error_msg})
+            http_status = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
+
+            print("\n[ND Plugin] ===== STREAMING ERROR OCCURRED =====")
+            print(f"[ND Plugin] URL: {reply.url().toString()}")
+            print(f"[ND Plugin] HTTP Status: {http_status}")
+            print(f"[ND Plugin] Network Error: {error_msg}")
+
+            log_error(f"Streaming error occurred (HTTP {http_status}): {error_msg}")
+
+            # Error response body is captured in _handle_streaming_data()
+            # DO NOT call error_callback here - let _handle_streaming_finished handle it
 
     def cancel_streaming_request(self, reply: Optional[QNetworkReply]) -> None:
         """Cancel an active streaming request."""
@@ -510,6 +750,10 @@ class ApiClient(QObject):
                      callback: Optional[Callable] = None, error_callback: Optional[Callable] = None) -> None:
         """Make HTTP request with proper error handling."""
         request_url = QUrl(url)
+        
+                
+        print(f'-------- {self.ensure_token_valid()}')
+        print(f'-------- {self.auth_token}')
         
         # Add query parameters for GET requests
         if method == "GET" and params:
@@ -546,38 +790,140 @@ class ApiClient(QObject):
         # Connect response handler
         reply.finished.connect(lambda: self._handle_network_reply(reply, callback, error_callback))
     
-    def _handle_network_reply(self, reply: QNetworkReply, 
+    def _handle_network_reply(self, reply: QNetworkReply,
                              callback: Optional[Callable] = None,
                              error_callback: Optional[Callable] = None) -> None:
-        """Handle network reply with proper error checking."""
+        """
+        Handle network reply with proper error checking.
+
+        Detects 401/403 authentication errors and triggers appropriate logout/error messages.
+        """
         # Remove from active replies list
         if reply in self._active_replies:
             self._active_replies.remove(reply)
-        
+
+        # Get request details for logging
+        request_url = reply.url().toString()
+
         try:
+            # Check HTTP status code
+            http_status = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
+
+            # Read response body
+            response_bytes = bytes(reply.readAll())
+            response_text = response_bytes.decode('utf-8') if response_bytes else ""
+
+            # Log all responses (success and error)
+            print(f"\n[ND Plugin] ===== API RESPONSE =====")
+            print(f"[ND Plugin] URL: {request_url}")
+            print(f"[ND Plugin] HTTP Status: {http_status}")
+            print(f"[ND Plugin] Network Error Code: {reply.error()}")
+
             if reply.error() != QNetworkReply.NoError:
                 error_msg = reply.errorString()
+                print(f"[ND Plugin] Network Error String: {error_msg}")
+
+                # Parse error response body
+                error_data = None
                 try:
-                    error_data = json.loads(bytes(reply.readAll()).decode('utf-8'))
-                    if 'error' in error_data:
-                        error_msg = error_data['error'].get('message', error_msg)
-                except:
-                    pass
-                
-                log_error(f"Network error: {error_msg}")
-                if error_callback:
+                    if response_text:
+                        error_data = json.loads(response_text)
+                        print(f"[ND Plugin] Error Response Body: {json.dumps(error_data, indent=2)}")
+
+                        # Extract detailed error information
+                        if 'error' in error_data:
+                            error_obj = error_data['error']
+                            if isinstance(error_obj, dict):
+                                error_code = error_obj.get('code', http_status)
+                                error_message = error_obj.get('message', error_msg)
+                                error_msg = f"HTTP {error_code}: {error_message}"
+
+                                # Log additional error details if present
+                                if 'errors' in error_obj:
+                                    print(f"[ND Plugin] Error Details: {error_obj['errors']}")
+                            elif isinstance(error_obj, str):
+                                error_msg = error_obj
+                    else:
+                        print(f"[ND Plugin] Empty response body")
+                except json.JSONDecodeError as json_err:
+                    print(f"[ND Plugin] Failed to parse error JSON: {json_err}")
+                    print(f"[ND Plugin] Raw error response: {response_text[:500]}")
+                except Exception as parse_err:
+                    print(f"[ND Plugin] Error parsing response: {parse_err}")
+
+                print(f"[ND Plugin] Final Error Message: {error_msg}")
+
+                # Detect authentication errors by HTTP status code
+                auth_error_handled = False
+                if http_status in [400, 401, 403]:
+                    log_error(f"Authentication error (HTTP {http_status}): {error_msg}")
+                    print(f"\n[ND Plugin] *** AUTHENTICATION ERROR DETECTED ***")
+
+                    # Check for specific Firebase errors
+                    if error_data and 'error' in error_data:
+                        error_obj = error_data['error']
+                        if isinstance(error_obj, dict):
+                            firebase_error = error_obj.get('message', '')
+
+                            # USER_DISABLED error
+                            if 'USER_DISABLED' in firebase_error:
+                                error_msg = f"Your account has been disabled. Please contact Needle Digital support at support@needle-digital.com (Error: USER_DISABLED)"
+                                print(f"[ND Plugin] USER_DISABLED error detected - account is disabled in Firebase")
+                                self.login_failed.emit(error_msg)
+                                auth_error_handled = True  # Don't call error_callback to avoid duplicate dialogs
+                            # Subscription expiration
+                            elif self.custom_expires_at and time.time() >= self.custom_expires_at:
+                                error_msg = "Your subscription has expired. Please contact Needle Digital support to renew your access."
+                                self.login_failed.emit(error_msg)
+                                auth_error_handled = True  # Don't call error_callback to avoid duplicate dialogs
+                            # Generic auth error
+                            else:
+                                error_msg = f"Authentication failed: {firebase_error}"
+                                self.login_failed.emit(error_msg)
+                                auth_error_handled = True  # Don't call error_callback to avoid duplicate dialogs
+                        else:
+                            self.login_failed.emit(error_msg)
+                            auth_error_handled = True  # Don't call error_callback to avoid duplicate dialogs
+                    else:
+                        # No specific error data, check subscription
+                        if self.custom_expires_at and time.time() >= self.custom_expires_at:
+                            error_msg = "Your subscription has expired. Please contact support or renew your subscription."
+                            self.login_failed.emit(error_msg)
+                            auth_error_handled = True  # Don't call error_callback to avoid duplicate dialogs
+                        else:
+                            error_msg = "Authentication expired. Please log in again."
+                            self.login_failed.emit(error_msg)
+                            auth_error_handled = True  # Don't call error_callback to avoid duplicate dialogs
+                else:
+                    log_error(f"Network error (HTTP {http_status}): {error_msg}")
+                    print(f"[ND Plugin] Network/Server error")
+
+                # Only call error_callback if we didn't already handle it via login_failed signal
+                # This prevents duplicate error dialogs
+                if error_callback and not auth_error_handled:
                     error_callback(error_msg)
             else:
-                response_data = json.loads(bytes(reply.readAll()).decode('utf-8'))
-                if callback:
-                    callback(response_data)
+                # Success response
+                print(f"[ND Plugin] Response successful")
+                try:
+                    response_data = json.loads(response_text) if response_text else {}
+                    print(f"[ND Plugin] Response data keys: {list(response_data.keys()) if isinstance(response_data, dict) else 'N/A'}")
+                    if callback:
+                        callback(response_data)
+                except json.JSONDecodeError as e:
+                    print(f"[ND Plugin] JSON parse error: {e}")
+                    print(f"[ND Plugin] Raw response: {response_text[:500]}")
+                    raise
+
         except json.JSONDecodeError as e:
             error_msg = f"Invalid JSON response: {e}"
+            print(f"\n[ND Plugin] JSON DECODE ERROR: {error_msg}")
             log_error(error_msg)
             if error_callback:
                 error_callback(error_msg)
         except Exception as e:
             error_msg = f"Unexpected error: {e}"
+            print(f"\n[ND Plugin] UNEXPECTED ERROR: {error_msg}")
             log_error(error_msg)
             if error_callback:
                 error_callback(error_msg)
@@ -587,19 +933,33 @@ class ApiClient(QObject):
     def _handle_login_response(self, response_data: Dict[str, Any]) -> None:
         """Handle login response from Firebase."""
         try:
+            # Log the login response
+            print(f"\n[ND Plugin] ===== LOGIN RESPONSE =====")
+            print(f"[ND Plugin] Response keys: {list(response_data.keys())}")
+
             self.auth_token = response_data.get("idToken")
             self.refresh_token = response_data.get("refreshToken")
 
             if not self.auth_token or not self.refresh_token:
+                print(f"[ND Plugin] ERROR: Missing tokens in response")
                 self.login_failed.emit("Could not retrieve authentication credentials.")
                 return
 
-            # Extract user role from token
+            # Extract user role and custom expiration from token
             self.user_role = get_user_role_from_token(self.auth_token)
+            self.custom_expires_at = get_custom_expires_at_from_token(self.auth_token)
 
             # Calculate token expiration
             expires_in = int(response_data.get("expiresIn", 3600))
             self.token_expires_at = time.time() + expires_in
+
+            print(f"[ND Plugin] Login successful!")
+            print(f"[ND Plugin] User role: {self.user_role}")
+            print(f"[ND Plugin] Token expires in: {expires_in}s ({expires_in/60:.1f} minutes)")
+            if self.custom_expires_at:
+                print(f"[ND Plugin] Subscription expires: {time.ctime(self.custom_expires_at)}")
+            else:
+                print(f"[ND Plugin] No custom subscription expiration found")
 
             # Save tokens, expiration time, and email
             settings = QgsSettings()
@@ -608,15 +968,26 @@ class ApiClient(QObject):
             settings.setValue("needle/tokenExpiresAt", str(self.token_expires_at))
             settings.setValue("needle/lastLoginEmail", self.last_login_email)
 
+            # Save custom expiration if present
+            if self.custom_expires_at is not None:
+                settings.setValue("needle/customExpiresAt", str(self.custom_expires_at))
+                log_info(f"Custom expiration set to: {time.ctime(self.custom_expires_at)}")
+            else:
+                # Clear any previously stored custom expiration
+                settings.remove("needle/customExpiresAt")
+                log_warning("No custom expiresAt found in token")
+
             # Setup token refresh timer - refresh at 50% of token lifetime for better persistence
             refresh_delay_ms = max(0, (expires_in // 2) * 1000)  # Refresh at halfway point (e.g., 30 min for 1hr token)
             self.token_refresh_timer.start(refresh_delay_ms)
+            print(f"[ND Plugin] Token refresh scheduled in {refresh_delay_ms/1000:.0f}s ({refresh_delay_ms/60000:.1f} minutes)")
             log_info(f"Token refresh scheduled in {refresh_delay_ms/1000:.0f} seconds ({refresh_delay_ms/60000:.1f} minutes)")
 
             self.login_success.emit()
 
         except Exception as e:
             error_msg = f"Login processing error: {e}"
+            print(f"\n[ND Plugin] ERROR: {error_msg}")
             log_error(error_msg)
             self.login_failed.emit(error_msg)
     
@@ -628,8 +999,9 @@ class ApiClient(QObject):
                 self.refresh_token = response_data.get("refresh_token")
 
             if self.auth_token:
-                # Extract user role from refreshed token
+                # Extract user role and custom expiration from refreshed token
                 self.user_role = get_user_role_from_token(self.auth_token)
+                self.custom_expires_at = get_custom_expires_at_from_token(self.auth_token)
 
                 expires_in = int(response_data.get("expires_in", 3600))
                 self.token_expires_at = time.time() + expires_in
@@ -642,11 +1014,15 @@ class ApiClient(QObject):
                 settings.setValue("needle/authToken", self.auth_token)
                 settings.setValue("needle/tokenExpiresAt", str(self.token_expires_at))
 
+                # Save custom expiration if present
+                if self.custom_expires_at is not None:
+                    settings.setValue("needle/customExpiresAt", str(self.custom_expires_at))
+                    log_info(f"Custom expiration refreshed: {time.ctime(self.custom_expires_at)}")
+
                 # Schedule next refresh at 50% of lifetime for better persistence
                 refresh_delay_ms = max(0, (expires_in // 2) * 1000)
                 self.token_refresh_timer.start(refresh_delay_ms)
                 log_info(f"Next token refresh scheduled in {refresh_delay_ms/1000:.0f} seconds")
-
 
                 # Emit login_success signal to update UI
                 self.login_success.emit()
