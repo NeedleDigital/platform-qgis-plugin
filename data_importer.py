@@ -431,6 +431,11 @@ class DataImporter:
                 # Has selections but also has leftover text - clear it automatically
                 tab_widgets['hole_type_filter'].clear_search_text()
 
+        # Check state filter - clear any leftover text (should be read-only but safeguard)
+        if hasattr(tab_widgets['state_filter'], 'clear_search_text') and tab_widgets['state_filter'].search_box.text().strip():
+            # Clear any leftover text in state filter
+            tab_widgets['state_filter'].clear_search_text()
+
         if errors:
             error_msg = "Please complete your filter selections:\n\n"
             error_msg += "\n".join(f"• {err}" for err in errors)

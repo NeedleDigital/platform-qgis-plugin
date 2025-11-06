@@ -867,12 +867,13 @@ class SearchableStaticFilterWidget(QWidget):
 
     selectionChanged = pyqtSignal(list)
 
-    def __init__(self, static_data=None, parent=None, show_all_chips=False, show_search_icon=True):
+    def __init__(self, static_data=None, parent=None, show_all_chips=False, show_search_icon=True, read_only=False):
         super().__init__(parent)
         self._selected_items = {}
         self._static_data = static_data or []  # List of strings or tuples (display, value)
         self._show_all_chips = show_all_chips  # Control whether to show all chips or limit to 4
         self._show_search_icon = show_search_icon  # Control whether to show search icon
+        self._read_only = read_only  # Control whether search box is read-only (click-only selection)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -928,8 +929,14 @@ class SearchableStaticFilterWidget(QWidget):
             """)
 
         self.search_box = QLineEdit(search_container)
-        self.search_box.setPlaceholderText("Click to select or type to search...")
-        self.search_box.textChanged.connect(self._on_search_text_changed)
+
+        # Set read-only mode if specified
+        if self._read_only:
+            self.search_box.setReadOnly(True)
+            self.search_box.setPlaceholderText("Click to select...")
+        else:
+            self.search_box.setPlaceholderText("Click to select or type to search...")
+            self.search_box.textChanged.connect(self._on_search_text_changed)
 
         # Adjust search box borders based on whether search icon is shown
         if self._show_search_icon:

@@ -197,8 +197,7 @@ class DataImporterDialog(QDialog):
         controls_layout.setRowWrapPolicy(QFormLayout.WrapLongRows)
         
         # State filter (common to both tabs) - using SearchableStaticFilterWidget for better UX
-        state_filter = SearchableStaticFilterWidget(show_all_chips=True, show_search_icon=False)
-        state_filter.search_box.setPlaceholderText("Click to select states (default all states)...")
+        state_filter = SearchableStaticFilterWidget(show_all_chips=True, show_search_icon=False, read_only=True)
         # Set static data for searching (list of Australian states)
         state_data = list(AUSTRALIAN_STATES)
         state_filter.setStaticData(state_data)

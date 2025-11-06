@@ -91,22 +91,27 @@ def create_trace_line_geometry(
     """
     Create LineString geometry for a single assay interval.
 
-    The line extends horizontally from the collar location, with offset
-    proportional to depth to create a side-view trace effect.
+    The line extends from the collar location based on azimuth direction.
+    If azimuth is not provided, creates a vertical line (straight down).
 
     Args:
-        record: Assay record with lat/latitude, lon/longitude, from_depth, to_depth
+        record: Assay record with lat/latitude, lon/longitude, from_depth, to_depth, azimuth (optional)
         max_depth_global: Maximum depth in dataset (for proportional offset)
         offset_scale: Scale factor for offset calculation
 
     Returns:
         LineString geometry representing the interval
     """
+    import math
+
     # Support both 'lat'/'lon' and 'latitude'/'longitude' field names
     lat = record.get('lat') or record.get('latitude', 0)
     lon = record.get('lon') or record.get('longitude', 0)
     from_depth = float(record.get('from_depth', 0))
     to_depth = float(record.get('to_depth', from_depth + 10))
+
+    # Get azimuth if available (can be None, negative, or positive)
+    azimuth = record.get('azimuth')
 
     # Calculate midpoint depth for offset
     midpoint_depth = (from_depth + to_depth) / 2
@@ -119,14 +124,29 @@ def create_trace_line_geometry(
         # Fixed scale offset (0.01 degrees ≈ 1.1 km at equator)
         offset = midpoint_depth / offset_scale * 0.01
 
-    # Create line from collar at 30° left of vertical
-    # 30° left of vertical means: 60° from horizontal
-    # dx = -offset * sin(30°) = -offset * 0.5 (leftward)
-    # dy = offset * cos(30°) = offset * 0.866 (upward)
-    import math
-    angle_rad = math.radians(30)
-    dx = -offset * math.sin(angle_rad)  # Negative for leftward
-    dy = offset * math.cos(angle_rad)   # Positive for northward (upward)
+    # Calculate trace direction based on azimuth
+    if azimuth is not None:
+        try:
+            azimuth_value = float(azimuth)
+            # Azimuth is a compass bearing: 0° = North, 90° = East, 180° = South, 270° = West
+            # Convert azimuth to radians for calculation
+            azimuth_rad = math.radians(azimuth_value)
+
+            # Calculate dx and dy based on azimuth
+            # In geographic coordinates:
+            # - dx (change in longitude) = offset * sin(azimuth)
+            # - dy (change in latitude) = offset * cos(azimuth)
+            # Note: This creates a line going in the azimuth direction
+            dx = offset * math.sin(azimuth_rad)
+            dy = offset * math.cos(azimuth_rad)
+        except (ValueError, TypeError):
+            # If azimuth is invalid, default to vertical line (straight down)
+            dx = 0
+            dy = -offset  # Negative = move south (downward)
+    else:
+        # No azimuth provided - create vertical line (straight down)
+        dx = 0
+        dy = -offset  # Negative = move south (downward)
 
     start_point = QgsPointXY(lon, lat)
     end_point = QgsPointXY(lon + dx, lat + dy)
