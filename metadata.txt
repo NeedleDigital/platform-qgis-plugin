@@ -5,7 +5,7 @@
 name=ND Data Importer
 qgisMinimumVersion=3.0
 description=Comprehensive QGIS plugin for importing Australian mining drill hole and assay data with advanced filtering, large dataset optimization, and enhanced theme-aware UI
-version=1.3.2
+version=1.3.4
 author=Needle Digital
 email=divyansh@needle-digital.com
 
@@ -29,6 +29,45 @@ tags=mining, drill hole, assay, geochemistry, database, australia, import, data
 
 # Changelog
 changelog=
+    1.3.4 - Industry-Standard Collar Grouping and Enhanced Layer Metadata
+        - BREAKING CHANGE: Collar grouping now uses hole_id + state instead of coordinates
+        - Real drill hole IDs preserved from API (no more auto-generated DH0001, DH0002)
+        - Hybrid grouping: Primary by (hole_id, state), fallback to coordinates if missing
+        - Cross-state disambiguation: Same hole_id in different states kept separate
+        - COLLAR LAYER: Added comprehensive fields (company_name, final_depth, datum, hole_type, project_name, avg_value)
+        - TRACE LAYER: Added detailed sample fields (sample_id, assay_element, assay_unit, sample_method, company_name, project_name)
+        - Added grey dashed lines for gap segments (no assay data) with "No Assay Data" legend entry
+        - Visual continuity: Full drill hole extent visible from collar to final depth
+        - Enhanced data validation with descriptive error messages for missing fields
+        - Coordinate-based grouping with warning logs for records without hole_id
+        - Auto-generated IDs (AUTO-0001) only for records missing hole_id
+        - Fixed progress dialog staying on top after successful import
+        - Fixed map zoom showing incorrect location (random sea) after assay import
+        - Improved CRS transformation for accurate zoom extent calculation
+        - Better alignment with industry geological data standards
+        - Improved data integrity and traceability for drill hole analysis
+        - Fixed authentication dialog not appearing when user not logged in
+
+    1.3.3 - Critical Stability and Authentication Reliability Release
+        - CRITICAL: Fixed token refresh race conditions preventing authentication lockouts
+        - CRITICAL: Fixed logout not clearing refresh state flags (prevents future login failures)
+        - CRITICAL: Fixed division by zero errors in trace visualization calculations
+        - CRITICAL: Fixed zero-length line crashes in Qt geometry layer (segfault prevention)
+        - HIGH: Added comprehensive data validation for trace visualization (missing field detection)
+        - HIGH: Implemented retry logic with exponential backoff for failed token refreshes (2s, 4s, 8s)
+        - HIGH: Added token validation on plugin startup (corrupts tokens automatically cleared)
+        - HIGH: Implemented refresh failure tracking (stops timer after 3 consecutive failures)
+        - MEDIUM: Added subscription expiration check in refresh to prevent wasted API calls
+        - MEDIUM: Enhanced settings cleanup with error handling for corrupted QSettings
+        - Enhanced wake-from-sleep scenario handling with proper token refresh
+        - Improved error messages for subscription expiration vs authentication errors
+        - Added comprehensive authentication flow logging for debugging
+        - Fixed 403 "User access expired" error handling during streaming
+        - Fixed trace line overlapping bug (now shows sequential depth segments)
+        - Fixed gaps in trace lines between collar and first assay interval
+        - Enhanced Qt C++ layer crash prevention with zero-length line detection
+        - Production-ready stability improvements for enterprise deployments
+
     1.3.2 - Authentication and Visualization Enhancements
         - Added email autofill for login (password never stored for security)
         - Improved token persistence with proactive refresh at 30 minutes instead of 59 minutes

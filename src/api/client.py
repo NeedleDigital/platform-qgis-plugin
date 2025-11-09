@@ -100,6 +100,8 @@ class ApiClient(QObject):
         self._streaming_buffers = {}  # Track SSE parsing buffers by reply
         self._streaming_decompressors = {}  # Track gzip decompressor objects by reply
         self._streaming_text_buffers = {}  # Track text buffers for incomplete SSE events
+        self._refresh_in_progress = False  # Track if token refresh is in progress (prevents race conditions)
+        self._refresh_failure_count = 0  # Track consecutive refresh failures
 
         # Token refresh timer
         self.token_refresh_timer = QTimer()
@@ -110,25 +112,50 @@ class ApiClient(QObject):
         self.refresh_token = settings.value("needle/refreshToken", None)
         self.auth_token = settings.value("needle/authToken", None)
 
+        # Validate token structure before using
+        if self.auth_token:
+            # JWT tokens have 3 parts separated by dots
+            parts = self.auth_token.split('.')
+            if len(parts) != 3:
+                log_warning("Corrupted auth token detected (invalid JWT structure) - clearing token")
+                self.auth_token = None
+                settings.remove("needle/authToken")
+
         # Extract role and custom expiration from stored token if available
         if self.auth_token:
             self.user_role = get_user_role_from_token(self.auth_token)
             self.custom_expires_at = get_custom_expires_at_from_token(self.auth_token)
 
-        # Safely load token expiration time
+        # Safely load token expiration time and validate
         try:
             expires_value = settings.value("needle/tokenExpiresAt", 0)
             self.token_expires_at = float(expires_value) if expires_value else 0
-        except (ValueError, TypeError):
-            self.token_expires_at = 0
 
-        # Safely load custom expiration time
+            # Validate timestamp is reasonable (after Jan 1, 2020)
+            if self.token_expires_at > 0 and self.token_expires_at < 1577836800:
+                log_warning(f"Invalid token expiration timestamp: {self.token_expires_at} - clearing")
+                self.token_expires_at = 0
+                settings.remove("needle/tokenExpiresAt")
+        except (ValueError, TypeError):
+            log_warning("Failed to parse token expiration time - clearing")
+            self.token_expires_at = 0
+            settings.remove("needle/tokenExpiresAt")
+
+        # Safely load custom expiration time and validate
         try:
             custom_expires_value = settings.value("needle/customExpiresAt", None)
             if custom_expires_value:
                 self.custom_expires_at = float(custom_expires_value)
+
+                # Validate timestamp is reasonable (after Jan 1, 2020)
+                if self.custom_expires_at > 0 and self.custom_expires_at < 1577836800:
+                    log_warning(f"Invalid custom expiration timestamp: {self.custom_expires_at} - clearing")
+                    self.custom_expires_at = None
+                    settings.remove("needle/customExpiresAt")
         except (ValueError, TypeError):
+            log_warning("Failed to parse custom expiration time - clearing")
             self.custom_expires_at = None
+            settings.remove("needle/customExpiresAt")
 
     def _log_request(self, method: str, url: str, params: Optional[Dict] = None, headers: Optional[Dict] = None):
         """Log API request details to Python console for debugging."""
@@ -259,10 +286,19 @@ class ApiClient(QObject):
         """
         Ensure token is valid, refresh if needed.
 
+        This method checks token validity and triggers refresh if needed.
+        It prevents race conditions by checking if refresh is already in progress.
+
         Returns:
-            True if valid/refreshed, False if custom subscription has expired
+            True if valid/refreshed, False if user needs to login
         """
         current_time = time.time()
+
+        # Check if user has ever logged in - if no tokens at all, return False immediately
+        # Don't try to refresh if there's no refresh token (user never logged in)
+        if not self.auth_token and not self.refresh_token:
+            log_info("No tokens found - user needs to login")
+            return False
 
         # Check custom subscription expiration first - can't refresh if subscription expired
         if self.custom_expires_at is not None and current_time >= self.custom_expires_at:
@@ -273,6 +309,17 @@ class ApiClient(QObject):
         time_until_expiry = self.token_expires_at - current_time
 
         if time_until_expiry < 300:  # Less than 5 minutes remaining
+            # Only try to refresh if we have a refresh token
+            if not self.refresh_token:
+                log_warning("Token expired but no refresh token available - user needs to login")
+                return False
+
+            # If refresh is already in progress, assume it will succeed
+            # This prevents race conditions from multiple simultaneous refresh requests
+            if self._refresh_in_progress:
+                log_info("Token refresh already in progress, returning optimistically")
+                return True
+
             log_info(f"Token expiring soon ({time_until_expiry:.0f}s), triggering proactive refresh...")
             self.refresh_auth_token(silent=True)
             return True
@@ -318,13 +365,25 @@ class ApiClient(QObject):
         self.last_login_email = ""
         self.token_refresh_timer.stop()
 
-        # Clear all stored tokens, expiration time, and email
+        # Clear refresh state to prevent stuck flags
+        self._refresh_in_progress = False
+        self._refresh_failure_count = 0
+
+        # Clear all stored tokens, expiration time, and email with error handling
         settings = QgsSettings()
-        settings.remove("needle/refreshToken")
-        settings.remove("needle/authToken")
-        settings.remove("needle/tokenExpiresAt")
-        settings.remove("needle/customExpiresAt")
-        settings.remove("needle/lastLoginEmail")
+        settings_to_remove = [
+            "needle/refreshToken",
+            "needle/authToken",
+            "needle/tokenExpiresAt",
+            "needle/customExpiresAt",
+            "needle/lastLoginEmail"
+        ]
+
+        for setting_key in settings_to_remove:
+            try:
+                settings.remove(setting_key)
+            except Exception as e:
+                log_warning(f"Failed to remove setting {setting_key}: {e}")
 
         # Cancel any ongoing requests
         self.cancel_all_requests()
@@ -337,24 +396,48 @@ class ApiClient(QObject):
         self._active_replies.clear()
     
     def refresh_auth_token(self, silent: bool = False) -> None:
-        """Refresh the authentication token using refresh token."""
+        """
+        Refresh the authentication token using refresh token.
+
+        Implements retry logic with exponential backoff on network failures.
+        Prevents wasted refreshes when subscription has expired.
+        """
         if not self.refresh_token:
             if not silent:
                 log_warning("Token refresh aborted: No refresh token available.")
             return
-        
-        
+
+        # Check if refresh is already in progress (prevent duplicate requests)
+        if self._refresh_in_progress:
+            log_info("Token refresh already in progress, skipping duplicate request")
+            return
+
+        # Check custom subscription expiration - don't waste time refreshing if subscription expired
+        current_time = time.time()
+        if self.custom_expires_at is not None and current_time >= self.custom_expires_at:
+            log_warning(f"Subscription expired at {time.ctime(self.custom_expires_at)} - stopping refresh attempts")
+            # Stop the timer to prevent infinite wasted refreshes
+            self.token_refresh_timer.stop()
+            # Clear tokens and emit login failure
+            self.logout()
+            self.login_failed.emit("Your subscription has expired. Please contact support to renew.")
+            return
+
+        # Set refresh in progress flag
+        self._refresh_in_progress = True
+        log_info("Starting token refresh...")
+
         payload = {
             "grant_type": "refresh_token",
             "refresh_token": self.refresh_token
         }
-        
+
         self._make_request(
             url=config.firebase_refresh_url,
             method="POST",
             data=payload,
             callback=self._handle_refresh_response,
-            error_callback=lambda error: log_error(f"Token refresh failed: {error}")
+            error_callback=self._handle_refresh_error
         )
     
     def make_api_request(self, endpoint: str, params: Dict[str, Any], callback: Optional[Callable] = None) -> None:
@@ -407,11 +490,6 @@ class ApiClient(QObject):
         Returns:
             QNetworkReply: The active network reply (for cancellation support)
         """
-        
-                
-        print(f'-------- {self.ensure_token_valid()}')
-        print(f'-------- {self.auth_token}')
-        
         # Ensure token is valid and refresh if needed (handles wake from sleep)
         if not self.ensure_token_valid():
             error_msg = "Authentication expired. Please log in again."
@@ -750,11 +828,7 @@ class ApiClient(QObject):
                      callback: Optional[Callable] = None, error_callback: Optional[Callable] = None) -> None:
         """Make HTTP request with proper error handling."""
         request_url = QUrl(url)
-        
-                
-        print(f'-------- {self.ensure_token_valid()}')
-        print(f'-------- {self.auth_token}')
-        
+
         # Add query parameters for GET requests
         if method == "GET" and params:
             # Build query string manually to avoid Qt version compatibility issues
@@ -1024,6 +1098,9 @@ class ApiClient(QObject):
                 self.token_refresh_timer.start(refresh_delay_ms)
                 log_info(f"Next token refresh scheduled in {refresh_delay_ms/1000:.0f} seconds")
 
+                # Reset failure count on success
+                self._refresh_failure_count = 0
+
                 # Emit login_success signal to update UI
                 self.login_success.emit()
             else:
@@ -1035,7 +1112,48 @@ class ApiClient(QObject):
             log_error(f"Token refresh processing error: {e}")
             # Emit login_failed signal to update UI
             self.login_failed.emit(f"Token refresh error: {e}")
-    
+        finally:
+            # Always clear the refresh in progress flag
+            self._refresh_in_progress = False
+
+    def _handle_refresh_error(self, error_msg: str) -> None:
+        """
+        Handle token refresh errors with retry logic and exponential backoff.
+
+        Implements:
+        - Retry up to 3 times with exponential backoff (2s, 4s, 8s)
+        - Stop timer after max retries to prevent infinite failures
+        - Clear tokens and logout on max retries
+        """
+        try:
+            # Increment failure count
+            self._refresh_failure_count += 1
+            log_error(f"Token refresh failed (attempt {self._refresh_failure_count}/3): {error_msg}")
+
+            # Check if we've exceeded max retries
+            if self._refresh_failure_count >= 3:
+                log_error("Token refresh failed after 3 attempts - forcing logout")
+
+                # Stop the timer to prevent infinite retry loops
+                self.token_refresh_timer.stop()
+
+                # Clear tokens
+                self.logout()
+
+                # Emit login failure
+                self.login_failed.emit("Token refresh failed after multiple attempts. Please log in again.")
+            else:
+                # Calculate retry delay with exponential backoff: 2s, 4s, 8s
+                retry_delay_ms = (2 ** self._refresh_failure_count) * 1000
+                log_info(f"Retrying token refresh in {retry_delay_ms/1000:.0f}s...")
+
+                # Schedule retry using QTimer.singleShot
+                QTimer.singleShot(retry_delay_ms, lambda: self.refresh_auth_token(silent=True))
+
+        finally:
+            # Always clear the refresh in progress flag
+            self._refresh_in_progress = False
+
     def _handle_api_response(self, endpoint: str, response_data, 
                            callback: Optional[Callable] = None) -> None:
         """Handle API response from Needle Digital service."""

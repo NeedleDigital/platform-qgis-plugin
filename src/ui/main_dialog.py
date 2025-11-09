@@ -963,8 +963,7 @@ class DataImporterDialog(QDialog):
                 tab_widgets['selected_bbox'] = selected_polygon
 
                 # Update indicator to show polygon is active
-                num_vertices = len(selected_polygon['coords'])
-                tab_widgets['bbox_indicator'].setText(f"📍 Polygon ({num_vertices} vertices)")
+                tab_widgets['bbox_indicator'].setText("📍 Bounding Box")
                 tab_widgets['bbox_indicator'].setVisible(True)
                 tab_widgets['bbox_clear_button'].setVisible(True)
 

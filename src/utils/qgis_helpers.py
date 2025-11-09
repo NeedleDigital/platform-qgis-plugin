@@ -49,7 +49,7 @@ from ..config.constants import (
     TRACE_DEFAULT_OFFSET_SCALE, TRACE_LINE_WIDTH, COLLAR_POINT_SIZE,
     TRACE_ELEMENT_STACK_OFFSET
 )
-from .logging import log_error, log_warning
+from .logging import log_error, log_warning, log_info
 # Import version compatibility utilities for QGIS 3.0+ support
 from .qgis_version_compat import create_qgs_field_compatible, get_qgis_version_int
 
@@ -804,24 +804,48 @@ class QGISLayerManager:
                 # Force update the layer extent before zooming
                 collar_layer.updateExtents()
 
-                # Get extent and add buffer
+                # Get extent in layer CRS
                 extent = collar_layer.extent()
 
                 if not extent.isEmpty():
-                    # Add 10% buffer around the data
-                    width = extent.width()
-                    height = extent.height()
-                    buffer_x = width * 0.1
-                    buffer_y = height * 0.1
-                    extent.setXMinimum(extent.xMinimum() - buffer_x)
-                    extent.setXMaximum(extent.xMaximum() + buffer_x)
-                    extent.setYMinimum(extent.yMinimum() - buffer_y)
-                    extent.setYMaximum(extent.yMaximum() + buffer_y)
-
-                    # Set extent and refresh canvas
                     map_canvas = self.iface.mapCanvas()
-                    map_canvas.setExtent(extent)
-                    map_canvas.refresh()
+
+                    # Get CRS information
+                    layer_crs = collar_layer.crs()
+                    canvas_crs = map_canvas.mapSettings().destinationCrs()
+
+                    # Transform extent if CRS differs
+                    extent_to_use = extent
+                    if layer_crs != canvas_crs:
+                        from qgis.core import QgsCoordinateTransform
+                        transform = QgsCoordinateTransform(layer_crs, canvas_crs, QgsProject.instance())
+                        try:
+                            extent_to_use = transform.transformBoundingBox(extent)
+                            log_info(f"Transformed extent from {layer_crs.authid()} to {canvas_crs.authid()}")
+                        except Exception as transform_error:
+                            log_warning(f"Failed to transform extent: {transform_error}, using original")
+                            extent_to_use = extent
+
+                    # Add 10% buffer around the data
+                    width = extent_to_use.width()
+                    height = extent_to_use.height()
+
+                    if width > 0 and height > 0:
+                        buffer_x = width * 0.1
+                        buffer_y = height * 0.1
+                        extent_to_use.setXMinimum(extent_to_use.xMinimum() - buffer_x)
+                        extent_to_use.setXMaximum(extent_to_use.xMaximum() + buffer_x)
+                        extent_to_use.setYMinimum(extent_to_use.yMinimum() - buffer_y)
+                        extent_to_use.setYMaximum(extent_to_use.yMaximum() + buffer_y)
+
+                        # Set extent and refresh canvas
+                        map_canvas.setExtent(extent_to_use)
+                        map_canvas.refresh()
+                        log_info(f"Zoomed to extent: {extent_to_use.toString()}")
+                    else:
+                        log_warning(f"Invalid extent dimensions: width={width}, height={height}")
+                else:
+                    log_warning("Collar layer extent is empty, cannot zoom")
 
             return True, f"Successfully created trace visualization: {len(holes)} collars, {len(data)} intervals"
 
@@ -876,16 +900,19 @@ class QGISLayerManager:
     def _create_collar_points_layer(
         self,
         layer_name: str,
-        holes: Dict[Tuple[float, float], List[Dict]],
+        holes: Dict[Tuple[str, str, str], List[Dict]],
         color: QColor,
         value_field: Optional[str] = None,
         point_size: float = 3.0
     ) -> Tuple[bool, Optional[QgsVectorLayer]]:
-        """Create point layer for drill hole collars.
+        """Create point layer for drill hole collars with comprehensive metadata.
 
         IMPORTANT: For QGIS memory layers, use provider.addFeatures() directly.
         DO NOT use layer.startEditing() / layer.commitChanges() - that pattern is
         for file-based layers only (shapefiles, GeoPackage, etc.).
+
+        Args:
+            holes: Dictionary mapping (hole_id/coord, state, type) tuples to sample lists
         """
         try:
             crs = QgsCoordinateReferenceSystem("EPSG:4326")
@@ -896,13 +923,20 @@ class QGISLayerManager:
 
             provider = layer.dataProvider()
 
-            # Define fields (pass sample values, not QVariant types)
+            # Define comprehensive fields for collar layer
             fields = [
-                create_qgs_field_compatible('hole_id', "DH0001"),      # String sample
-                create_qgs_field_compatible('lat', 0.0),               # Double sample
-                create_qgs_field_compatible('lon', 0.0),               # Double sample
-                create_qgs_field_compatible('sample_count', 0),        # Int sample
-                create_qgs_field_compatible('max_value', 0.0)          # Double sample
+                create_qgs_field_compatible('hole_id', "DH0001"),          # Real or generated hole ID
+                create_qgs_field_compatible('company_name', "Company"),    # Company name
+                create_qgs_field_compatible('state', "NSW"),               # State/Territory
+                create_qgs_field_compatible('lat', 0.0),                   # Latitude
+                create_qgs_field_compatible('lon', 0.0),                   # Longitude
+                create_qgs_field_compatible('datum', "GDA94"),             # Coordinate datum
+                create_qgs_field_compatible('hole_type', "Unknown"),       # Hole type (DDH, RC, etc.)
+                create_qgs_field_compatible('final_depth', 0.0),           # Maximum depth drilled
+                create_qgs_field_compatible('sample_count', 0),            # Number of assay samples
+                create_qgs_field_compatible('max_value', 0.0),             # Maximum assay value
+                create_qgs_field_compatible('avg_value', 0.0),             # Average assay value
+                create_qgs_field_compatible('project_name', "Unknown")     # Project name
             ]
             provider.addAttributes(fields)
             layer.updateFields()
@@ -910,58 +944,113 @@ class QGISLayerManager:
             # Add layer to project BEFORE adding features (some QGIS versions require this)
             QgsProject.instance().addMapLayer(layer, False)
 
-            # Build all features first, then add in batch (same pattern as trace lines)
+            # Build all features first, then add in batch
             all_features = []
-            hole_id = 1
-            for (lat, lon), samples in holes.items():
+            auto_id_counter = 1
+
+            for (identifier, state, grouping_type), samples in holes.items():
+                if not samples:
+                    continue
+
                 feature = QgsFeature(layer.fields())
 
+                # Get first sample as representative for collar-level data
+                first_sample = samples[0]
+
+                # Extract coordinates (handle both grouping types)
+                if grouping_type == 'coords':
+                    # identifier is "lat_lon" format
+                    try:
+                        lat_str, lon_str = identifier.split('_')
+                        lat = float(lat_str)
+                        lon = float(lon_str)
+                    except (ValueError, AttributeError):
+                        lat = first_sample.get('lat') or first_sample.get('latitude', 0)
+                        lon = first_sample.get('lon') or first_sample.get('longitude', 0)
+                else:
+                    # Get from first sample
+                    lat = first_sample.get('lat') or first_sample.get('latitude', 0)
+                    lon = first_sample.get('lon') or first_sample.get('longitude', 0)
+
                 # Create point geometry
-                point_geom = QgsGeometry.fromPointXY(QgsPointXY(lon, lat))
-                feature.setGeometry(point_geom)
+                try:
+                    point_geom = QgsGeometry.fromPointXY(QgsPointXY(float(lon), float(lat)))
+                    feature.setGeometry(point_geom)
+                except (ValueError, TypeError) as e:
+                    log_warning(f"Invalid coordinates for collar {identifier}: {e}")
+                    continue
 
-                # Calculate stats for this hole using the detected value field
+                # Calculate statistics for this hole
                 values = []
+                depths = []
                 if value_field:
-                    values = [s.get(value_field, 0) for s in samples if s.get(value_field) is not None]
-                max_val = max(values) if values else 0
+                    for s in samples:
+                        val = s.get(value_field)
+                        if val is not None:
+                            try:
+                                values.append(float(val))
+                            except (ValueError, TypeError):
+                                pass
 
-                # Prepare attribute data
+                        # Collect depths for final_depth calculation
+                        to_depth = s.get('to_depth')
+                        if to_depth is not None:
+                            try:
+                                depths.append(float(to_depth))
+                            except (ValueError, TypeError):
+                                pass
+
+                max_val = max(values) if values else 0.0
+                avg_val = (sum(values) / len(values)) if values else 0.0
+                final_depth = max(depths) if depths else 0.0
+
+                # Prepare attribute data with comprehensive error handling
+                # Use real hole_id if available, otherwise generate one
+                if grouping_type == 'id':
+                    hole_id_value = identifier
+                else:
+                    hole_id_value = f"AUTO-{auto_id_counter:04d}"
+                    auto_id_counter += 1
+
                 attr_data = {
-                    'hole_id': f"DH{hole_id:04d}",
-                    'lat': lat,
-                    'lon': lon,
+                    'hole_id': hole_id_value,
+                    'company_name': first_sample.get('company_name') or first_sample.get('company') or 'Unknown',
+                    'state': state if state else (first_sample.get('state') or 'Unknown'),
+                    'lat': float(lat),
+                    'lon': float(lon),
+                    'datum': first_sample.get('datum') or first_sample.get('coord_datum') or 'GDA94',
+                    'hole_type': first_sample.get('hole_type') or first_sample.get('type') or 'Unknown',
+                    'final_depth': final_depth,
                     'sample_count': len(samples),
-                    'max_value': max_val
+                    'max_value': max_val,
+                    'avg_value': avg_val,
+                    'project_name': first_sample.get('project_name') or first_sample.get('project') or 'Unknown'
                 }
 
-                # Set attributes by iterating over fields (same pattern as trace lines)
+                # Set attributes by iterating over fields
                 for field in layer.fields():
                     field_name = field.name()
                     if field_name in attr_data:
-                        feature.setAttribute(field_name, attr_data[field_name])
+                        try:
+                            feature.setAttribute(field_name, attr_data[field_name])
+                        except Exception as e:
+                            log_warning(f"Failed to set attribute {field_name}: {e}")
 
                 all_features.append(feature)
-                hole_id += 1
 
-            # Validate a few features before adding
-            if all_features:
-                for i in range(min(3, len(all_features))):
-                    f = all_features[i]
+            if not all_features:
+                log_warning("No valid collar features created")
+                return False, None
 
             # Add all features to provider in batch
             success, added_features = provider.addFeatures(all_features)
 
-            # Check for errors
             if not success:
-                # Try to get more detailed error info
-
-                # Try adding just the first feature to see if there's a specific error
-                test_success, test_added = provider.addFeatures([all_features[0]])
+                log_error("Failed to add collar features to layer")
+                return False, None
 
             # Force extent recalculation
             layer.updateExtents()
-
 
             # Apply styling with custom point size
             self._apply_layer_styling(layer, color, point_size)
@@ -971,6 +1060,8 @@ class QGISLayerManager:
 
         except Exception as e:
             log_error(f"Failed to create collar layer: {str(e)}")
+            import traceback
+            log_error(traceback.format_exc())
             return False, None
 
     def _create_trace_lines_layer(
@@ -998,7 +1089,33 @@ class QGISLayerManager:
             Tuple of (success, layer or None)
         """
         try:
-            from .trace_visualization import create_trace_line_geometry
+            from .trace_visualization import (
+                create_trace_line_geometry,
+                group_by_collar,
+                create_continuous_trace_segments
+            )
+
+            # Validate data structure
+            if not data:
+                return False, "No data to import"
+
+            sample_record = data[0]
+            required_fields = ['from_depth', 'to_depth']
+            missing_fields = []
+
+            for field in required_fields:
+                if field not in sample_record:
+                    missing_fields.append(field)
+
+            # Check for coordinate fields (lat/lon or latitude/longitude)
+            has_coords = (('lat' in sample_record or 'latitude' in sample_record) and
+                         ('lon' in sample_record or 'longitude' in sample_record))
+
+            if not has_coords:
+                missing_fields.extend(['lat/latitude', 'lon/longitude'])
+
+            if missing_fields:
+                return False, f"Data is missing required fields: {', '.join(missing_fields)}"
 
             crs = QgsCoordinateReferenceSystem("EPSG:4326")
             layer = QgsVectorLayer(f"LineString?crs={crs.authid()}", layer_name, "memory")
@@ -1008,60 +1125,162 @@ class QGISLayerManager:
 
             provider = layer.dataProvider()
 
-            # Define fields based on first record
-            if data:
-                fields = self._create_fields_from_data(data[0])
-                # Add depth-specific fields
-                fields.extend([
-                    create_qgs_field_compatible('interval_length', QVariant.Double),
-                    create_qgs_field_compatible('midpoint_depth', QVariant.Double)
-                ])
-                provider.addAttributes(fields)
-                layer.updateFields()
+            # Define comprehensive fields for trace layer
+            # Core sample identification
+            fields = [
+                create_qgs_field_compatible('sample_id', "SAMPLE001"),         # Sample ID
+                create_qgs_field_compatible('hole_id', "DH0001"),              # Drill hole ID
+                create_qgs_field_compatible('from_depth', 0.0),                # Interval start depth
+                create_qgs_field_compatible('to_depth', 0.0),                  # Interval end depth
+                create_qgs_field_compatible('interval_length', 0.0),           # Interval length (calculated)
+                create_qgs_field_compatible('midpoint_depth', 0.0),            # Midpoint depth (calculated)
+            ]
 
-            # Create line features with progress updates (use provider.addFeatures for memory layers)
+            # Assay information
+            fields.extend([
+                create_qgs_field_compatible('assay_element', "Au"),            # Element being measured
+                create_qgs_field_compatible('assay_value', 0.0),               # Assay value/concentration
+                create_qgs_field_compatible('assay_unit', "ppm"),              # Unit of measurement
+                create_qgs_field_compatible('sample_method', "Unknown"),       # Sampling method (if present)
+            ])
+
+            # Location and metadata
+            fields.extend([
+                create_qgs_field_compatible('state', "NSW"),                   # State/Territory
+                create_qgs_field_compatible('company_name', "Unknown"),        # Company name
+                create_qgs_field_compatible('project_name', "Unknown"),        # Project name
+                create_qgs_field_compatible('lat', 0.0),                       # Latitude
+                create_qgs_field_compatible('lon', 0.0),                       # Longitude
+            ])
+
+            # Technical fields
+            fields.extend([
+                create_qgs_field_compatible('is_gap_segment', 0),              # 1 for gap, 0 for real assay
+                create_qgs_field_compatible('hole_type', "Unknown"),           # Hole type (DDH, RC, etc.)
+                create_qgs_field_compatible('datum', "GDA94"),                 # Coordinate datum
+            ])
+
+            provider.addAttributes(fields)
+            layer.updateFields()
+
+            # Group data by collar to create continuous traces per drill hole
+            holes = group_by_collar(data)
+
+            if not holes:
+                log_warning("No drill holes found in data")
+                return False, None
+
+            # Create continuous line features with progress updates
             total_records = len(data)
-            chunk_size = 1000  # Update progress and add features in chunks
+            chunk_size = 1000
+            processed_count = 0
 
             all_features = []
-            for idx, record in enumerate(data):
-                feature = QgsFeature(layer.fields())
 
-                # Create trace line geometry
-                line_geom = create_trace_line_geometry(
-                    record,
-                    max_depth,
-                    TRACE_DEFAULT_OFFSET_SCALE
-                )
-                feature.setGeometry(line_geom)
+            # Process each drill hole
+            for collar_key, intervals in holes.items():
+                try:
+                    # Create continuous segments (including gap-filling)
+                    segments = create_continuous_trace_segments(
+                        intervals,
+                        max_depth,
+                        TRACE_DEFAULT_OFFSET_SCALE
+                    )
 
-                # Set attributes
-                for field in layer.fields():
-                    field_name = field.name()
-                    if field_name == 'interval_length':
-                        from_d = float(record.get('from_depth', 0))
-                        to_d = float(record.get('to_depth', from_d))
-                        feature.setAttribute(field_name, to_d - from_d)
-                    elif field_name == 'midpoint_depth':
-                        from_d = float(record.get('from_depth', 0))
-                        to_d = float(record.get('to_depth', from_d))
-                        feature.setAttribute(field_name, (from_d + to_d) / 2)
-                    else:
-                        feature.setAttribute(field_name, record.get(field_name))
+                    # Create a feature for each segment
+                    for segment_record, segment_from, segment_to in segments:
+                        try:
+                            feature = QgsFeature(layer.fields())
 
-                all_features.append(feature)
+                            # Create trace line geometry for this segment
+                            line_geom = create_trace_line_geometry(
+                                segment_record,
+                                max_depth,
+                                TRACE_DEFAULT_OFFSET_SCALE,
+                                from_depth=segment_from,
+                                to_depth=segment_to
+                            )
 
-                # Update progress every chunk_size records
-                if progress_callback and (idx + 1) % chunk_size == 0:
+                            # Skip None geometries (zero-length lines)
+                            if line_geom is None:
+                                continue
+
+                            feature.setGeometry(line_geom)
+
+                            # Determine if this is a gap segment (no assay data)
+                            # Use tolerance for floating point comparison
+                            original_from = float(segment_record.get('from_depth', 0))
+                            original_to = float(segment_record.get('to_depth', original_from))
+                            tolerance = 0.001  # 1mm tolerance for float comparison
+                            is_gap = not (abs(segment_from - original_from) < tolerance and abs(segment_to - original_to) < tolerance)
+
+                            # Extract hole_id from collar_key tuple
+                            hole_id_value, state_value, grouping_type = collar_key
+
+                            # Build comprehensive attribute data with error handling
+                            lat = segment_record.get('lat') or segment_record.get('latitude', 0)
+                            lon = segment_record.get('lon') or segment_record.get('longitude', 0)
+
+                            attr_data = {
+                                # Core sample identification
+                                'sample_id': segment_record.get('sample_id') or segment_record.get('id') or 'Unknown',
+                                'hole_id': hole_id_value,
+                                'from_depth': segment_from,
+                                'to_depth': segment_to,
+                                'interval_length': segment_to - segment_from,
+                                'midpoint_depth': (segment_from + segment_to) / 2,
+
+                                # Assay information
+                                'assay_element': element,
+                                'assay_value': 0.0001 if is_gap else (segment_record.get(element) or segment_record.get('assay_value', 0.0)),
+                                'assay_unit': segment_record.get('assay_unit') or segment_record.get('unit', 'ppm'),
+                                'sample_method': segment_record.get('sample_method') or segment_record.get('method', 'Unknown'),
+
+                                # Location and metadata
+                                'state': state_value if state_value else (segment_record.get('state') or 'Unknown'),
+                                'company_name': segment_record.get('company_name') or segment_record.get('company', 'Unknown'),
+                                'project_name': segment_record.get('project_name') or segment_record.get('project', 'Unknown'),
+                                'lat': float(lat) if lat else 0.0,
+                                'lon': float(lon) if lon else 0.0,
+
+                                # Technical fields
+                                'is_gap_segment': 1 if is_gap else 0,
+                                'hole_type': segment_record.get('hole_type') or segment_record.get('type', 'Unknown'),
+                                'datum': segment_record.get('datum') or segment_record.get('coord_datum', 'GDA94'),
+                            }
+
+                            # Set attributes with comprehensive error handling
+                            for field in layer.fields():
+                                field_name = field.name()
+                                try:
+                                    if field_name in attr_data:
+                                        feature.setAttribute(field_name, attr_data[field_name])
+                                except Exception as attr_err:
+                                    log_warning(f"Error setting attribute {field_name}: {attr_err}")
+                                    continue
+
+                            all_features.append(feature)
+
+                        except Exception as segment_err:
+                            log_error(f"Error creating segment from {segment_from} to {segment_to}: {segment_err}")
+                            continue
+
+                    processed_count += len(intervals)
+
+                except Exception as hole_err:
+                    log_error(f"Error processing collar {collar_key}: {hole_err}")
+                    continue
+
+                # Update progress
+                if progress_callback and processed_count % chunk_size == 0:
                     # Progress from 30% to 85% during trace creation
-                    progress_pct = 0.3 + (0.55 * (idx + 1) / total_records)
-                    progress_callback(int(total_records * progress_pct), f"Creating trace lines ({idx + 1:,}/{total_records:,})...")
+                    progress_pct = 0.3 + (0.55 * processed_count / total_records)
+                    progress_callback(int(total_records * progress_pct), f"Creating continuous traces ({processed_count:,}/{total_records:,})...")
 
             # Add all features to provider (correct pattern for memory layers)
             success, added_features = provider.addFeatures(all_features)
 
             layer.updateExtents()
-
 
             # Add to project
             QgsProject.instance().addMapLayer(layer, False)  # Don't add to legend yet
@@ -1070,4 +1289,6 @@ class QGISLayerManager:
 
         except Exception as e:
             log_error(f"Failed to create trace lines layer: {str(e)}")
+            import traceback
+            log_error(traceback.format_exc())
             return False, None

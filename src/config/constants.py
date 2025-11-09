@@ -29,7 +29,7 @@ from typing import List, Tuple
 
 # Plugin metadata and version information
 PLUGIN_NAME = "Needle Digital DH Importer"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.3.3"
 PLUGIN_AUTHOR = "Needle Digital"
 PLUGIN_DESCRIPTION = "Import Australian mining drill hole data into QGIS"
 

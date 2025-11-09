@@ -451,8 +451,10 @@ class DataImporter:
             # Hide cancel button since no API request is in progress
             self.dlg.hide_cancel_button()
 
-            # Ensure user is logged out first
-            self._handle_logout_request()
+            # Only logout if user was actually logged in (has tokens)
+            # If user was never logged in, don't call logout (which might trigger unnecessary cleanup)
+            if self.data_manager.api_client.auth_token or self.data_manager.api_client.refresh_token:
+                self._handle_logout_request()
 
             # Show login dialog directly without error message
             if not self.login_dlg:
@@ -632,13 +634,17 @@ class DataImporter:
                             point_size, collar_name, trace_name, layer_name, trace_scale
                         )
                         progress_dialog.finish_import(success, record_count if success else 0, message)
+                        # Close progress dialog before showing success message
+                        progress_dialog.close()
                         self._handle_import_result(success, message, warning_dialog_shown)
                     except InterruptedError:
                         progress_dialog.finish_import(False, 0, "Import was cancelled by user.")
+                        progress_dialog.close()
                         self.dlg.show_info("Import was cancelled.")
                     except Exception as e:
                         error_msg = f"Trace visualization failed: {str(e)}"
                         progress_dialog.finish_import(False, 0, error_msg)
+                        progress_dialog.close()
                         self.dlg.show_error(error_msg)
                 else:
                     # Small dataset - no progress dialog
@@ -677,22 +683,26 @@ class DataImporter:
             success, message = self.layer_manager.create_point_layer_chunked(
                 layer_name, data, color, progress_callback, point_size
             )
-            
+
             # Update final progress
             progress_dialog.finish_import(success, len(data) if success else 0, message)
-            
+            # Close progress dialog before showing success message
+            progress_dialog.close()
+
             # Show result message (suppress popup if warning dialog was shown)
             self._handle_import_result(success, message, warning_dialog_shown)
-            
+
         except InterruptedError:
             # User cancelled import
             progress_dialog.finish_import(False, 0, "Import was cancelled by user.")
+            progress_dialog.close()
             self.dlg.show_info("Import was cancelled.")
-            
+
         except Exception as e:
             # Import failed
             error_msg = f"Chunked import failed: {str(e)}"
             progress_dialog.finish_import(False, 0, error_msg)
+            progress_dialog.close()
             self.dlg.show_error(error_msg)
     
     def _handle_import_result(self, success, message, warning_dialog_shown=False):
