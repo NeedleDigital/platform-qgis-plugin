@@ -26,32 +26,128 @@ from qgis.PyQt.QtCore import QVariant
 from qgis.PyQt.QtGui import QColor
 
 
-def group_by_collar(data: List[Dict[str, Any]]) -> Dict[Tuple[float, float], List[Dict]]:
+def group_by_collar(data: List[Dict[str, Any]]) -> Dict[Tuple[str, str, str], List[Dict]]:
     """
-    Group assay samples by unique collar location (lat, lon).
+    Group assay samples by unique drill hole (hole_id + state) with fallback to coordinates.
+
+    This function uses a hybrid approach to group samples:
+    1. Primary: Group by (hole_id, state, 'id') if both are available
+    2. Fallback: Group by (lat_lon_string, '', 'coords') if hole_id or state is missing
+
+    The third element in the key tuple is a type identifier ('id' or 'coords') to
+    distinguish between the two grouping methods.
 
     Args:
-        data: List of assay records with lat/lon coordinates
+        data: List of assay records with hole_id, state, and/or coordinates
 
     Returns:
-        Dictionary mapping (lat, lon) tuples to list of samples at that location
+        Dictionary mapping (identifier, state, type) tuples to list of samples,
+        sorted by from_depth in ascending order
+
+    Examples:
+        - Hole with ID and state: ("DDH-001", "NSW", "id")
+        - Hole with ID, no state: ("RC-045", "Unknown", "id")
+        - Hole without ID: ("-31.234567_115.789012", "", "coords")
     """
+    from ..utils.logging import log_warning
+
     holes = {}
     for record in data:
-        # Support both 'lat'/'lon' and 'latitude'/'longitude' field names
-        lat = record.get('lat') or record.get('latitude', 0)
-        lon = record.get('lon') or record.get('longitude', 0)
+        hole_id = record.get('hole_id', '').strip() if record.get('hole_id') else ''
+        state = record.get('state', '').strip() if record.get('state') else ''
 
-        # Round to 6 decimal places (~0.1m precision) for grouping
-        lat = round(float(lat), 6)
-        lon = round(float(lon), 6)
-        key = (lat, lon)
+        # Primary grouping: Use hole_id + state if hole_id exists
+        if hole_id:
+            # Use state if available, otherwise use 'Unknown'
+            state_value = state if state else 'Unknown'
+            key = (hole_id, state_value, 'id')
+        else:
+            # Fallback: Use coordinates if no hole_id
+            # Support both 'lat'/'lon' and 'latitude'/'longitude' field names
+            lat = record.get('lat') or record.get('latitude', 0)
+            lon = record.get('lon') or record.get('longitude', 0)
+
+            try:
+                # Round to 6 decimal places (~0.1m precision) for grouping
+                lat = round(float(lat), 6)
+                lon = round(float(lon), 6)
+
+                # Create coordinate-based identifier
+                coord_id = f"{lat}_{lon}"
+                key = (coord_id, '', 'coords')
+
+                # Log warning for first occurrence
+                if key not in holes:
+                    log_warning(f"Record without hole_id found at ({lat}, {lon}) - using coordinate-based grouping")
+            except (ValueError, TypeError) as e:
+                log_warning(f"Invalid coordinates for record without hole_id: {e}")
+                # Use a fallback key for records with neither hole_id nor valid coordinates
+                key = ('INVALID_RECORD', '', 'coords')
 
         if key not in holes:
             holes[key] = []
         holes[key].append(record)
 
+    # Sort intervals within each hole by from_depth
+    for key in holes:
+        holes[key].sort(key=lambda r: float(r.get('from_depth', 0)))
+
     return holes
+
+
+def create_continuous_trace_segments(
+    intervals: List[Dict[str, Any]],
+    max_depth_global: Optional[float] = None,
+    offset_scale: float = 500.0
+) -> List[Tuple[Dict[str, Any], float, float]]:
+    """
+    Create continuous trace segments including gap-filling segments.
+
+    This ensures the trace line is continuous from collar (depth 0) to the maximum depth,
+    filling any gaps between assay intervals.
+
+    Args:
+        intervals: Sorted list of assay records for a single drill hole
+        max_depth_global: Maximum depth in dataset
+        offset_scale: Scale factor for offset calculation
+
+    Returns:
+        List of tuples (record, from_depth, to_depth) for creating continuous segments
+    """
+    if not intervals:
+        return []
+
+    segments = []
+
+    # Get collar location from first interval
+    first_interval = intervals[0]
+    first_from_depth = float(first_interval.get('from_depth', 0))
+
+    # Add leading segment from collar (0) to first interval if needed
+    if first_from_depth > 0.001:  # Only if gap is meaningful (> 1mm)
+        # Create gap-filling segment from 0 to first interval
+        segments.append((first_interval, 0.0, first_from_depth))
+
+    # Add all assay intervals
+    for i, interval in enumerate(intervals):
+        from_depth = float(interval.get('from_depth', 0))
+        to_depth = float(interval.get('to_depth', from_depth + 10))
+
+        # Only add segment if it has meaningful length (> 1mm)
+        if abs(to_depth - from_depth) > 0.001:
+            segments.append((interval, from_depth, to_depth))
+
+        # Check if there's a gap to the next interval
+        if i < len(intervals) - 1:
+            next_interval = intervals[i + 1]
+            next_from_depth = float(next_interval.get('from_depth', to_depth))
+
+            # If there's a meaningful gap (> 1mm), add a connecting segment
+            if next_from_depth > to_depth + 0.001:
+                # Use current interval's data for the gap segment
+                segments.append((interval, to_depth, next_from_depth))
+
+    return segments
 
 
 def get_max_depth_from_data(data: List[Dict[str, Any]]) -> Optional[float]:
@@ -86,50 +182,97 @@ def get_max_depth_from_data(data: List[Dict[str, Any]]) -> Optional[float]:
 def create_trace_line_geometry(
     record: Dict[str, Any],
     max_depth_global: Optional[float] = None,
-    offset_scale: float = 500.0
+    offset_scale: float = 500.0,
+    from_depth: Optional[float] = None,
+    to_depth: Optional[float] = None
 ) -> QgsGeometry:
     """
     Create LineString geometry for a single assay interval.
 
-    The line extends horizontally from the collar location, with offset
-    proportional to depth to create a side-view trace effect.
+    Creates a line segment representing the actual depth interval from from_depth to to_depth,
+    extending in the azimuth direction. This ensures sequential intervals don't overlap.
 
     Args:
-        record: Assay record with lat/latitude, lon/longitude, from_depth, to_depth
+        record: Assay record with lat/latitude, lon/longitude, azimuth (optional)
         max_depth_global: Maximum depth in dataset (for proportional offset)
         offset_scale: Scale factor for offset calculation
+        from_depth: Start depth of interval (overrides record value if provided)
+        to_depth: End depth of interval (overrides record value if provided)
 
     Returns:
-        LineString geometry representing the interval
+        LineString geometry representing the interval from from_depth to to_depth
     """
+    import math
+
     # Support both 'lat'/'lon' and 'latitude'/'longitude' field names
     lat = record.get('lat') or record.get('latitude', 0)
     lon = record.get('lon') or record.get('longitude', 0)
-    from_depth = float(record.get('from_depth', 0))
-    to_depth = float(record.get('to_depth', from_depth + 10))
 
-    # Calculate midpoint depth for offset
-    midpoint_depth = (from_depth + to_depth) / 2
+    # Use provided depths or fall back to record values
+    if from_depth is None:
+        from_depth = float(record.get('from_depth', 0))
+    if to_depth is None:
+        to_depth = float(record.get('to_depth', from_depth + 10))
 
-    # Calculate offset magnitude for line length (longer lines for better visibility)
+    # Get azimuth if available (can be None, negative, or positive)
+    azimuth = record.get('azimuth')
+
+    # Calculate offset for start and end points based on actual depths
+    # This creates sequential segments instead of overlapping lines
     if max_depth_global and max_depth_global > 0:
         # Proportional offset based on total depth (0.01 degrees ≈ 1.1 km)
-        offset = midpoint_depth / max_depth_global * 0.01
-    else:
+        start_offset = from_depth / max_depth_global * 0.01
+        end_offset = to_depth / max_depth_global * 0.01
+    elif offset_scale > 0:
         # Fixed scale offset (0.01 degrees ≈ 1.1 km at equator)
-        offset = midpoint_depth / offset_scale * 0.01
+        start_offset = from_depth / offset_scale * 0.01
+        end_offset = to_depth / offset_scale * 0.01
+    else:
+        # Fallback to fixed offset to prevent division by zero
+        start_offset = from_depth * 0.00001
+        end_offset = to_depth * 0.00001
 
-    # Create line from collar at 30° left of vertical
-    # 30° left of vertical means: 60° from horizontal
-    # dx = -offset * sin(30°) = -offset * 0.5 (leftward)
-    # dy = offset * cos(30°) = offset * 0.866 (upward)
-    import math
-    angle_rad = math.radians(30)
-    dx = -offset * math.sin(angle_rad)  # Negative for leftward
-    dy = offset * math.cos(angle_rad)   # Positive for northward (upward)
+    # Calculate trace direction based on azimuth
+    if azimuth is not None:
+        try:
+            azimuth_value = float(azimuth)
+            # Azimuth is a compass bearing: 0° = North, 90° = East, 180° = South, 270° = West
+            # Convert azimuth to radians for calculation
+            azimuth_rad = math.radians(azimuth_value)
 
-    start_point = QgsPointXY(lon, lat)
-    end_point = QgsPointXY(lon + dx, lat + dy)
+            # Calculate dx and dy based on azimuth for start and end points
+            # In geographic coordinates:
+            # - dx (change in longitude) = offset * sin(azimuth)
+            # - dy (change in latitude) = offset * cos(azimuth)
+            start_dx = start_offset * math.sin(azimuth_rad)
+            start_dy = start_offset * math.cos(azimuth_rad)
+            end_dx = end_offset * math.sin(azimuth_rad)
+            end_dy = end_offset * math.cos(azimuth_rad)
+        except (ValueError, TypeError):
+            # If azimuth is invalid, default to vertical line (straight down)
+            start_dx = 0
+            start_dy = -start_offset  # Negative = move south (downward)
+            end_dx = 0
+            end_dy = -end_offset
+    else:
+        # No azimuth provided - create vertical line (straight down)
+        start_dx = 0
+        start_dy = -start_offset  # Negative = move south (downward)
+        end_dx = 0
+        end_dy = -end_offset
+
+    # Start point at from_depth position, end point at to_depth position
+    start_point = QgsPointXY(lon + start_dx, lat + start_dy)
+    end_point = QgsPointXY(lon + end_dx, lat + end_dy)
+
+    # CRITICAL: Prevent zero-length lines which can crash Qt
+    # If start and end are the same (or very close), return None to skip this segment
+    MIN_LINE_LENGTH = 0.00001  # Minimum line length in degrees (~1 meter)
+
+    if abs(start_point.x() - end_point.x()) < MIN_LINE_LENGTH and \
+       abs(start_point.y() - end_point.y()) < MIN_LINE_LENGTH:
+        # Skip zero-length segments entirely - don't create geometry
+        return None
 
     return QgsGeometry.fromPolylineXY([start_point, end_point])
 
@@ -207,12 +350,19 @@ def calculate_data_statistics(data: List[Dict[str, Any]], value_field: str) -> D
     values.sort()
     n = len(values)
 
-    # Calculate basic stats
+    # Calculate basic stats with division by zero protection
     minimum = values[0]
     maximum = values[-1]
-    mean = sum(values) / n
-    variance = sum((x - mean) ** 2 for x in values) / n
-    std_dev = variance ** 0.5
+
+    if n > 0:
+        mean = sum(values) / n
+        variance = sum((x - mean) ** 2 for x in values) / n
+        std_dev = variance ** 0.5
+    else:
+        # Should never happen due to check above, but added for safety
+        mean = 0.0
+        variance = 0.0
+        std_dev = 0.0
 
     # Calculate percentiles
     percentiles = {}
@@ -318,6 +468,7 @@ def apply_graduated_trace_symbology(
     Apply graduated color rendering to trace layer based on statistical classification.
 
     Uses custom or default color scheme for trace visualization.
+    Includes special grey range for gap segments (no assay data).
 
     Args:
         layer: Vector layer to style
@@ -340,6 +491,26 @@ def apply_graduated_trace_symbology(
 
     # Create renderer ranges
     ranges = []
+
+    # FIRST: Add special grey range for gap segments (no assay data)
+    # Gap segments have assay_value = 0.0001 (see qgis_helpers.py line 1211)
+    gap_symbol = QgsLineSymbol.createSimple({
+        'color': "#A5A5A5AD",  # Medium grey
+        'width': str(line_width),  # Same width as regular lines
+        'capstyle': 'flat',
+        'joinstyle': 'miter',
+        'line_style': 'solid'  # Solid line (continuous)
+    })
+
+    gap_range = QgsRendererRange(
+        0.0,           # Lower bound
+        0.001,         # Upper bound (captures 0.0001 gap value)
+        gap_symbol,
+        "No Assay Data"
+    )
+    ranges.append(gap_range)
+
+    # THEN: Add regular assay value ranges
     for i in range(num_ranges):
         # Get color and name for this range
         color = colors[i] if i < len(colors) else QColor(150, 150, 150)

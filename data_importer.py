@@ -21,6 +21,7 @@ License: GPL-3.0+
 """
 
 import os
+import time
 from qgis.PyQt.QtCore import QTranslator, QCoreApplication, qVersion
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QMessageBox
@@ -246,6 +247,7 @@ class DataImporter:
         self.data_manager.error_occurred.connect(self.dlg.hide_cancel_button)  # Hide cancel button on error
         self.data_manager.loading_started.connect(self.dlg.show_loading)  # Show loading state
         self.data_manager.loading_finished.connect(self.dlg.hide_loading)  # Hide loading state
+        self.data_manager.loading_finished.connect(self.dlg.hide_cancel_button)  # Hide cancel button when loading finished
         self.data_manager.companies_search_results.connect(self.dlg.handle_company_search_results)  # Company search results
         self.data_manager.login_required.connect(self._handle_login_required)  # Direct login dialog when auth needed
         
@@ -284,10 +286,20 @@ class DataImporter:
             # Check if user was actually authenticated before logout
             was_authenticated = self.data_manager.api_client.is_authenticated()
 
+            # Logout from API client (clears tokens, stops timer)
             self.data_manager.api_client.logout()
+
+            # Update UI login status
             self.dlg.update_login_status(False)
 
-            # Clear any existing data
+            # Reset all filters in the UI
+            self.dlg._reset_all_filters()
+
+            # Clear DataManager tab data completely (filters, cached data)
+            self.data_manager.clear_tab_data("Holes")
+            self.data_manager.clear_tab_data("Assays")
+
+            # Clear table display
             self.dlg.show_data("Holes", [], [], {'has_data': False, 'current_page': 0, 'total_pages': 0, 'showing_records': 0, 'total_records': 0, 'records_per_page': 100})
             self.dlg.show_data("Assays", [], [], {'has_data': False, 'current_page': 0, 'total_pages': 0, 'showing_records': 0, 'total_records': 0, 'records_per_page': 100})
 
@@ -342,14 +354,48 @@ class DataImporter:
     def _handle_login_failed(self, error_message):
         """Handle failed login."""
         try:
+            # Log the error to Python console
+            print(f"\n[ND Plugin] ===== LOGIN FAILED =====")
+            print(f"[ND Plugin] Error: {error_message}")
+
             self.dlg.update_progress(0)
             self.dlg.update_status("Authentication failed.")
-            
-            if self.login_dlg:
+
+            # Check for USER_DISABLED error (Firebase account disabled)
+            if "USER_DISABLED" in error_message:
+                # Force logout
+                self._handle_logout_request()
+
+                # Show critical error dialog
+                from qgis.PyQt.QtWidgets import QMessageBox
+                QMessageBox.critical(
+                    self.dlg,
+                    "Account Disabled",
+                    "Your account has been disabled.\n\n"
+                    "Possible reasons:\n"
+                    "• Subscription or license expired\n"
+                    "• Account flagged for security reasons\n\n"
+                    "Please contact Needle Digital support:\n"
+                    "Email: divyansh@needle-digital.com\n\n"
+                )
+            # Check if this is a subscription expiration error
+            elif "subscription has expired" in error_message.lower():
+                # Force logout for expired subscription
+                self._handle_logout_request()
+
+                # Show prominent error message to user
+                from qgis.PyQt.QtWidgets import QMessageBox
+                QMessageBox.critical(
+                    self.dlg,
+                    "Subscription Expired",
+                    error_message + "\n\nYou have been logged out. Please contact divyansh@needle-digital.com to renew your subscription."
+                )
+            elif self.login_dlg:
+                # Normal login failure - show in login dialog
                 self.login_dlg.on_login_result(False, f"Login Failed: {error_message}")
-            
+
             log_warning(f"Login failed: {error_message}")
-            
+
         except Exception as e:
             log_error(f"Login failure handler error: {str(e)}")
 
@@ -363,12 +409,37 @@ class DataImporter:
             log_error(f"UI update error: {str(e)}")
 
     def _validate_token_and_logout_if_expired(self):
-        """Validate token and automatically logout if expired."""
+        """
+        Validate token and automatically logout if expired.
+
+        This method is called when the dialog is shown, handling cases where:
+        - User opens plugin after laptop sleep/wake
+        - Token expired while plugin was inactive
+        - Subscription (custom expiresAt) has expired
+
+        It will attempt to refresh the token if possible, or logout if not.
+        """
         try:
-            if not self.data_manager.is_authenticated():
-                # Token is expired or invalid, logout user
+            # Try to ensure token is valid (will refresh if needed and possible)
+            if not self.data_manager.api_client.ensure_token_valid():
+                # Token validation failed - could be expired JWT or subscription
+                custom_expires_at = self.data_manager.api_client.custom_expires_at
+
+                # Check if subscription expired
+                if custom_expires_at is not None:
+                    if time.time() >= custom_expires_at:
+                        # Subscription expired - force logout
+                        self._handle_logout_request()
+                        if self.dlg:
+                            self.dlg.show_plugin_message(
+                                "Your subscription has expired. Please contact support or renew your subscription.",
+                                "warning",
+                                6000
+                            )
+                        return
+
+                # Token expired and couldn't refresh - logout user
                 self._handle_logout_request()
-                # Show message about session expiration
                 if self.dlg:
                     self.dlg.show_plugin_message("Session expired. Please log in again.", "warning", 4000)
         except Exception as e:
@@ -377,8 +448,13 @@ class DataImporter:
     def _handle_login_required(self):
         """Handle login required signal - show login dialog directly."""
         try:
-            # Ensure user is logged out first
-            self._handle_logout_request()
+            # Hide cancel button since no API request is in progress
+            self.dlg.hide_cancel_button()
+
+            # Only logout if user was actually logged in (has tokens)
+            # If user was never logged in, don't call logout (which might trigger unnecessary cleanup)
+            if self.data_manager.api_client.auth_token or self.data_manager.api_client.refresh_token:
+                self._handle_logout_request()
 
             # Show login dialog directly without error message
             if not self.login_dlg:
@@ -389,12 +465,71 @@ class DataImporter:
         except Exception as e:
             log_error(f"Login required handler error: {str(e)}")
 
+    def _validate_filter_selections(self, tab_name):
+        """
+        Validate that all filter widgets with text have selections made.
+        If selections exist but there's leftover text, clear the text automatically.
+
+        Returns:
+            str: Error message if validation fails, None if valid
+        """
+        tab_widgets = self.dlg.holes_tab if tab_name == "Holes" else self.dlg.assays_tab
+        errors = []
+
+        # Check company name filter
+        if hasattr(tab_widgets['company_filter'], 'has_unselected_text'):
+            if tab_widgets['company_filter'].has_unselected_text():
+                # Text exists but no selections - this is an error
+                errors.append("Company Name: You have entered text but haven't selected a company from the list.")
+            elif hasattr(tab_widgets['company_filter'], 'clear_search_text') and tab_widgets['company_filter'].search_box.text().strip():
+                # Has selections but also has leftover text - clear it automatically
+                tab_widgets['company_filter'].clear_search_text()
+
+        # Check hole type filter
+        if hasattr(tab_widgets['hole_type_filter'], 'has_unselected_text'):
+            if tab_widgets['hole_type_filter'].has_unselected_text():
+                # Text exists but no selections - this is an error
+                errors.append("Hole Type: You have entered text but haven't selected a hole type from the list.")
+            elif hasattr(tab_widgets['hole_type_filter'], 'clear_search_text') and tab_widgets['hole_type_filter'].search_box.text().strip():
+                # Has selections but also has leftover text - clear it automatically
+                tab_widgets['hole_type_filter'].clear_search_text()
+
+        # Check state filter - clear any leftover text (should be read-only but safeguard)
+        if hasattr(tab_widgets['state_filter'], 'clear_search_text') and tab_widgets['state_filter'].search_box.text().strip():
+            # Clear any leftover text in state filter
+            tab_widgets['state_filter'].clear_search_text()
+
+        if errors:
+            error_msg = "Please complete your filter selections:\n\n"
+            error_msg += "\n".join(f"• {err}" for err in errors)
+            error_msg += "\n\nYou can either:\n"
+            error_msg += "• Select an option from the dropdown list, or\n"
+            error_msg += "• Clear the text field to proceed without that filter"
+            return error_msg
+
+        return None
+
     def _handle_data_fetch_request(self, tab_name, params, fetch_all):
         """Handle data fetch request."""
         try:
-            self.dlg.show_cancel_button()  # Show cancel button when starting fetch
+            # Validate that there's no unselected text in filters
+            validation_error = self._validate_filter_selections(tab_name)
+            if validation_error:
+                from qgis.PyQt.QtWidgets import QMessageBox
+                QMessageBox.warning(
+                    self.dlg,
+                    "Invalid Filter Selection",
+                    validation_error
+                )
+                return
+
+            # Only show cancel button if user is authenticated
+            # If not authenticated, login_required signal will be emitted and login dialog will show
+            if self.data_manager.is_authenticated():
+                self.dlg.show_cancel_button()  # Show cancel button when starting fetch
+
             self.data_manager.fetch_data(tab_name, params, fetch_all)
-            
+
         except Exception as e:
             error_msg = f"Data fetch error: {str(e)}"
             log_error(error_msg)
@@ -499,13 +634,17 @@ class DataImporter:
                             point_size, collar_name, trace_name, layer_name, trace_scale
                         )
                         progress_dialog.finish_import(success, record_count if success else 0, message)
+                        # Close progress dialog before showing success message
+                        progress_dialog.close()
                         self._handle_import_result(success, message, warning_dialog_shown)
                     except InterruptedError:
                         progress_dialog.finish_import(False, 0, "Import was cancelled by user.")
+                        progress_dialog.close()
                         self.dlg.show_info("Import was cancelled.")
                     except Exception as e:
                         error_msg = f"Trace visualization failed: {str(e)}"
                         progress_dialog.finish_import(False, 0, error_msg)
+                        progress_dialog.close()
                         self.dlg.show_error(error_msg)
                 else:
                     # Small dataset - no progress dialog
@@ -544,22 +683,26 @@ class DataImporter:
             success, message = self.layer_manager.create_point_layer_chunked(
                 layer_name, data, color, progress_callback, point_size
             )
-            
+
             # Update final progress
             progress_dialog.finish_import(success, len(data) if success else 0, message)
-            
+            # Close progress dialog before showing success message
+            progress_dialog.close()
+
             # Show result message (suppress popup if warning dialog was shown)
             self._handle_import_result(success, message, warning_dialog_shown)
-            
+
         except InterruptedError:
             # User cancelled import
             progress_dialog.finish_import(False, 0, "Import was cancelled by user.")
+            progress_dialog.close()
             self.dlg.show_info("Import was cancelled.")
-            
+
         except Exception as e:
             # Import failed
             error_msg = f"Chunked import failed: {str(e)}"
             progress_dialog.finish_import(False, 0, error_msg)
+            progress_dialog.close()
             self.dlg.show_error(error_msg)
     
     def _handle_import_result(self, success, message, warning_dialog_shown=False):
@@ -572,8 +715,21 @@ class DataImporter:
             # Show import success message in plugin dialog
             if self.dlg:
                 self.dlg.show_plugin_message(message, "success", 5000)
+
+                # Bring QGIS main window to focus (plugin dialog goes to back)
+                self._bring_qgis_to_focus()
         else:
             self.dlg.show_error(message)
+
+    def _bring_qgis_to_focus(self):
+        """Bring QGIS main window to focus."""
+        try:
+            if self.iface and self.iface.mainWindow():
+                main_window = self.iface.mainWindow()
+                main_window.raise_()
+                main_window.activateWindow()
+        except Exception as e:
+            log_warning(f"Failed to bring QGIS to focus: {e}")
 
     def _is_assay_data(self, data):
         """Detect if data is assay data with depth intervals.
@@ -642,11 +798,18 @@ class DataImporter:
         try:
             self.data_manager.cancel_request()
             self.dlg.hide_cancel_button()
-            
+            # Show cancellation message
+            self.dlg.show_plugin_message("Request cancelled", "info", 3000)
+
         except Exception as e:
+            # Log the error but don't show popup for expected race conditions
             error_msg = f"Cancel request error: {str(e)}"
-            log_error(error_msg)
-            self.dlg.show_error(error_msg)
+            log_warning(error_msg)
+            # Still hide the cancel button and try to clean up
+            self.dlg.hide_cancel_button()
+            # Only show error if it's something unexpected (not list.remove errors)
+            if "list.remove" not in str(e):
+                self.dlg.show_error(error_msg)
 
     def _handle_page_next(self, tab_name: str):
         """Handle next page request."""
@@ -669,8 +832,21 @@ class DataImporter:
     def _handle_company_search_request(self, query: str):
         """Handle company search request."""
         try:
+            # Show loading indicator in the active tab's company filter
+            current_tab_index = self.dlg.tabs.currentIndex()
+            if current_tab_index == 0:  # Holes tab
+                self.dlg.holes_tab['company_filter'].show_loading()
+            else:  # Assays tab
+                self.dlg.assays_tab['company_filter'].show_loading()
+
             self.data_manager.search_companies(query)
         except Exception as e:
             error_msg = f"Company search error: {str(e)}"
             log_error(error_msg)
+            # Hide loading indicator on error
+            current_tab_index = self.dlg.tabs.currentIndex()
+            if current_tab_index == 0:
+                self.dlg.holes_tab['company_filter'].hide_loading()
+            else:
+                self.dlg.assays_tab['company_filter'].hide_loading()
             # Don't show error to user for search failures, just log them

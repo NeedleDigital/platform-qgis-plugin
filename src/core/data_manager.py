@@ -130,15 +130,19 @@ class DataManager(QObject):
         """Cancel any ongoing API requests and reset state."""
         if not self._is_fetching:
             return
-        
-        
+
+
         # Cancel streaming request if active
         if self.streaming_state and self.streaming_state.get('reply'):
             reply = self.streaming_state['reply']
             tab_name = self.streaming_state.get('tab_name', 'Holes')
 
-            # Abort the network request
-            self.api_client.cancel_streaming_request(reply)
+            # Abort the network request (handle case where reply might be deleted)
+            try:
+                self.api_client.cancel_streaming_request(reply)
+            except RuntimeError:
+                # Reply object was already deleted - this is okay, just log it
+                log_info("Cancel request: Reply object already deleted")
 
             # Clear state
             self.streaming_state = None
@@ -172,9 +176,19 @@ class DataManager(QObject):
             filter_params: Dictionary of filter parameters
             fetch_all: Whether to fetch all available records (always False now)
         """
-        if not self.is_authenticated():
-            # Instead of showing error message, trigger direct login dialog
-            self.login_required.emit()
+        # Check authentication and try to refresh if needed (handles wake from sleep)
+        if not self.api_client.ensure_token_valid():
+            # Token validation failed - check if it's subscription expiration
+            if self.api_client.custom_expires_at and time.time() >= self.api_client.custom_expires_at:
+                # Subscription expired - emit error with specific message
+                error_msg = "Your subscription has expired. Please contact Needle Digital support to renew your access."
+                self.status_changed.emit(error_msg)
+                self.loading_finished.emit(tab_name)
+                # Trigger login_failed to show message and force logout
+                self.api_client.login_failed.emit(error_msg)
+            else:
+                # Session expired - trigger login dialog
+                self.login_required.emit()
             return
 
         # Emit loading started signal
@@ -251,7 +265,14 @@ class DataManager(QObject):
             error_callback=self._handle_streaming_error
         )
 
-        self.streaming_state['reply'] = reply
+        # Check if request was actually started (can be None if auth failed)
+        if reply is not None:
+            self.streaming_state['reply'] = reply
+        else:
+            # Request failed to start (e.g., authentication expired)
+            # The error_callback will be called, so just clear the state
+            self.streaming_state = None
+            self._is_fetching = False
     
     def _handle_streaming_data(self, event_data: dict) -> None:
         """Process incoming data batch from SSE stream."""
@@ -369,36 +390,81 @@ class DataManager(QObject):
         """
         Handle error events from SSE stream.
 
-        IMPORTANT: Error events are just informational events in the stream,
-        NOT fatal errors. The stream continues and we wait for the 'complete' event.
-        Do NOT close the stream or cleanup state here.
+        IMPORTANT: Some errors (like HTTP errors) are fatal and require stopping the stream.
+        SSE event errors are informational and the stream continues.
         """
         try:
-            log_error(f"SSE error event received (stream continues): {error_data}")
+            log_error(f"SSE error event received: {error_data}")
 
             # Silently ignore if no active streaming state
             if not self.streaming_state:
                 return
 
-            # Extract error message safely
+            # Extract error message and check if it's fatal
+            is_fatal = False
+            error_msg = 'Unknown error'
+
             if isinstance(error_data, dict):
                 error_msg = error_data.get('error', 'Unknown error')
+                is_fatal = error_data.get('is_fatal', False)
+                http_status = error_data.get('http_status')
+
                 # Check for API error details
                 if 'message' in error_data:
                     error_msg = error_data.get('message', error_msg)
+
+                # Log HTTP status if present
+                if http_status:
+                    log_error(f"HTTP {http_status} error: {error_msg}")
             elif isinstance(error_data, str):
                 error_msg = error_data
             else:
                 error_msg = str(error_data)
 
-            # Just log the error - DO NOT close stream or cleanup state
-            # The stream will continue and we'll get more data/progress/complete events
-            log_error(f"Non-fatal stream error: {error_msg}")
+            # Handle fatal errors (HTTP errors like 403)
+            if is_fatal:
+                log_error(f"FATAL stream error - stopping: {error_msg}")
+
+                # Get tab name before cleanup
+                tab_name = self.streaming_state.get('tab_name', 'Unknown')
+
+                # Cleanup streaming state
+                self.streaming_state = None
+                self._is_fetching = False
+
+                # Stop progress indicator
+                self.progress_changed.emit(-1)
+
+                # Check if this is a subscription expiration error
+                if "subscription has expired" in error_msg.lower() or "access expired" in error_msg.lower():
+                    # Trigger logout via login_failed signal for subscription expiration
+                    log_error("Subscription expired - triggering logout")
+                    self.api_client.login_failed.emit(error_msg)
+                else:
+                    # Show regular error to user
+                    self.status_changed.emit(f"Error: {error_msg}")
+                    self.error_occurred.emit(error_msg)
+
+                # Emit loading finished to unlock UI
+                self.loading_finished.emit(tab_name)
+
+                log_error(f"Stream aborted due to fatal error: {error_msg}")
+            else:
+                # Non-fatal SSE event error - stream continues
+                log_error(f"Non-fatal stream error (stream continues): {error_msg}")
 
         except Exception as e:
             import traceback
             log_error(f"Critical error in error handler: {e}")
             log_error(traceback.format_exc())
+
+            # Emergency cleanup on critical error
+            if self.streaming_state:
+                tab_name = self.streaming_state.get('tab_name', 'Unknown')
+                self.streaming_state = None
+                self._is_fetching = False
+                self.progress_changed.emit(-1)
+                self.loading_finished.emit(tab_name)
     
     def get_tab_data(self, tab_name: str) -> tuple:
         """Get data and headers for a tab."""
@@ -451,7 +517,23 @@ class DataManager(QObject):
     def _handle_api_error(self, endpoint: str, error_message: str) -> None:
         """Handle API error signals."""
         log_error(f"API Error for {endpoint}: {error_message}")
-        self.error_occurred.emit(f"API request failed: {error_message}")
+
+        # Customize error message for company search "Not Found" errors
+        if 'companies/search' in endpoint and 'Not Found' in error_message:
+            # Extract company name from the error message URL if possible
+            import re
+            match = re.search(r'company_name=([^&\s]+)', error_message)
+            if match:
+                company_name = match.group(1).replace('%20', ' ')
+                user_message = f"No company found matching '{company_name}'. Please try a different search term."
+            else:
+                user_message = "No companies found matching your search. Please try a different search term."
+            self.error_occurred.emit(user_message)
+
+            # Emit empty results to hide loading indicator and clear popup
+            self.companies_search_results.emit([])
+        else:
+            self.error_occurred.emit(f"API request failed: {error_message}")
 
         # Reset streaming state on error
         if self.streaming_state:

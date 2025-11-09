@@ -7,7 +7,7 @@ from qgis.PyQt.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QLayout, QComboBox,
     QListView, QDialog, QLineEdit, QFormLayout, QDialogButtonBox, QMessageBox,
     QColorDialog, QProgressDialog, QScrollArea, QFrame, QTableWidget, QTableWidgetItem, QHeaderView,
-    QSizePolicy, QToolButton, QDoubleSpinBox
+    QSizePolicy, QToolButton, QDoubleSpinBox, QApplication
 )
 from qgis.PyQt.QtGui import QFont, QColor, QStandardItemModel, QStandardItem, QCursor, QIcon
 from qgis.PyQt.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize, QEvent, QTimer
@@ -21,6 +21,69 @@ from ..utils.logging import log_info, log_error, log_warning, log_debug
 from ..config.constants import (
     MAX_SAFE_IMPORT, OSM_LAYER_NAME, OSM_LAYER_URL, PARTIAL_IMPORT_LIMIT, TRACE_SCALE_THRESHOLD
 )
+
+
+def get_theme_aware_button_style() -> str:
+    """Get theme-aware styling for dialog buttons (OK, Cancel, Close).
+
+    Returns:
+        CSS stylesheet string for QPushButton
+    """
+    palette = QApplication.palette()
+    window_color = palette.color(palette.Window)
+    is_dark_theme = window_color.lightness() < 128
+
+    if is_dark_theme:
+        return """
+            QPushButton {
+                background-color: #3C3C3C;
+                color: #FFFFFF;
+                border: 1px solid #555555;
+                padding: 5px 15px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #4A4A4A;
+                border: 1px solid #666666;
+            }
+            QPushButton:pressed {
+                background-color: #2A2A2A;
+            }
+            QPushButton:default {
+                background-color: #0D47A1;
+                border: 1px solid #1976D2;
+            }
+            QPushButton:default:hover {
+                background-color: #1565C0;
+                border: 1px solid #1E88E5;
+            }
+        """
+    else:
+        return """
+            QPushButton {
+                background-color: #F5F5F5;
+                color: #000000;
+                border: 1px solid #CCCCCC;
+                padding: 5px 15px;
+                border-radius: 3px;
+            }
+            QPushButton:hover {
+                background-color: #E0E0E0;
+                border: 1px solid #999999;
+            }
+            QPushButton:pressed {
+                background-color: #D5D5D5;
+            }
+            QPushButton:default {
+                background-color: #2196F3;
+                color: #FFFFFF;
+                border: 1px solid #1976D2;
+            }
+            QPushButton:default:hover {
+                background-color: #1E88E5;
+                border: 1px solid #1565C0;
+            }
+        """
 
 
 class FlowLayout(QLayout):
@@ -110,42 +173,78 @@ class Chip(QWidget):
         self.text = text
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(5, 2, 2, 2)
+        layout.setContentsMargins(6, 2, 2, 2)
         layout.setSpacing(4)
 
         self.label = QLabel(text, self)
 
         self.close_button = QPushButton("×", self)
-        self.close_button.setFixedSize(16, 16)
+        self.close_button.setFixedSize(14, 14)
         self.close_button.setDefault(False)
         self.close_button.setAutoDefault(False)
-        self.close_button.setStyleSheet("""
-            QPushButton {
+
+        # Detect theme (dark or light)
+        from qgis.PyQt.QtWidgets import QApplication
+        palette = QApplication.palette()
+        window_color = palette.color(palette.Window)
+        is_dark_theme = window_color.lightness() < 128
+
+        # Theme-aware button styling with proper contrast
+        if is_dark_theme:
+            button_bg = "#E3F2FD"
+            button_hover = "#BBDEFB"
+            button_pressed = "#90CAF9"
+            button_text = "#0D47A1"
+        else:
+            button_bg = "#1976D2"
+            button_hover = "#1565C0"
+            button_pressed = "#0D47A1"
+            button_text = "#FFFFFF"
+
+        self.close_button.setStyleSheet(f"""
+            QPushButton {{
                 font-family: "Arial", sans-serif;
                 font-weight: bold;
-                border-radius: 8px;
-                border: 1px solid #ccc;
-                background-color: #f0f0f0;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #e0e0e0;
-            }
-            QPushButton:pressed {
-                background-color: #d0d0d0;
-            }
+                border-radius: 7px;
+                border: none;
+                background-color: {button_bg};
+                color: {button_text};
+                font-size: 11px;
+                padding: 0px;
+            }}
+            QPushButton:hover {{
+                background-color: {button_hover};
+            }}
+            QPushButton:pressed {{
+                background-color: {button_pressed};
+            }}
         """)
         self.close_button.clicked.connect(self._emit_removed_signal)
 
         layout.addWidget(self.label)
         layout.addWidget(self.close_button)
 
-        self.setStyleSheet("""
-            Chip {
-                background-color: #e1e1e1;
-                border-radius: 8px;
-                border: 1px solid #c0c0c0;
-            }
+        # Theme-aware chip styling with blue accent
+        if is_dark_theme:
+            chip_bg = "#0D47A1"
+            chip_border = "#1976D2"
+            chip_text = "#E3F2FD"
+        else:
+            chip_bg = "#E3F2FD"
+            chip_border = "#2196F3"
+            chip_text = "#0D47A1"
+
+        self.setStyleSheet(f"""
+            Chip {{
+                background-color: {chip_bg};
+                border-radius: 10px;
+                border: 1px solid {chip_border};
+            }}
+            Chip QLabel {{
+                color: {chip_text};
+                font-size: 11px;
+                font-weight: 500;
+            }}
         """)
 
     def _emit_removed_signal(self):
@@ -228,15 +327,26 @@ class MessageBar(QWidget):
                 # Fallback if setupUI failed
                 return
 
-            # Simple styling based on message type
+            # Detect theme for appropriate styling
+            from PyQt5.QtWidgets import QApplication
+            palette = QApplication.palette()
+            window_color = palette.color(palette.Window)
+            is_dark_theme = window_color.lightness() < 128
+
+            # Theme-aware styling based on message type
+            # Message bars should be bright enough to stand out in both themes
             if message_type.lower() == "success":
-                self.setStyleSheet("background-color: #4CAF50; color: white; padding: 8px; border-radius: 4px;")
+                bg_color = "#2E7D32" if is_dark_theme else "#4CAF50"
+                self.setStyleSheet(f"background-color: {bg_color}; color: white; padding: 8px; border-radius: 4px;")
             elif message_type.lower() == "error" or message_type.lower() == "critical":
-                self.setStyleSheet("background-color: #f44336; color: white; padding: 8px; border-radius: 4px;")
+                bg_color = "#C62828" if is_dark_theme else "#f44336"
+                self.setStyleSheet(f"background-color: {bg_color}; color: white; padding: 8px; border-radius: 4px;")
             elif message_type.lower() == "warning":
-                self.setStyleSheet("background-color: #FF9800; color: white; padding: 8px; border-radius: 4px;")
+                bg_color = "#EF6C00" if is_dark_theme else "#FF9800"
+                self.setStyleSheet(f"background-color: {bg_color}; color: white; padding: 8px; border-radius: 4px;")
             else:  # info
-                self.setStyleSheet("background-color: #2196F3; color: white; padding: 8px; border-radius: 4px;")
+                bg_color = "#1565C0" if is_dark_theme else "#2196F3"
+                self.setStyleSheet(f"background-color: {bg_color}; color: white; padding: 8px; border-radius: 4px;")
 
             self.setVisible(True)
 
@@ -460,10 +570,116 @@ class DynamicSearchFilterWidget(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(4)
 
-        self.search_box = QLineEdit(self)
+        # Create container for search box with icons
+        search_container = QWidget(self)
+        search_container.setFixedHeight(30)
+        search_layout = QHBoxLayout(search_container)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(0)
+
+        # Detect theme for styling
+        from qgis.PyQt.QtWidgets import QApplication
+        palette = QApplication.palette()
+        window_color = palette.color(palette.Window)
+        is_dark_theme = window_color.lightness() < 128
+
+        # Theme-aware colors
+        if is_dark_theme:
+            border_color = "#555555"
+            bg_color = "#2b2b2b"
+            text_color = "#E0E0E0"
+            icon_color = "#888888"
+        else:
+            border_color = "#C0C0C0"
+            bg_color = "#FFFFFF"
+            text_color = "#000000"
+            icon_color = "#666666"
+
+        # Search icon label (left side)
+        self.search_icon = QLabel("🔍", search_container)
+        self.search_icon.setFixedWidth(28)
+        self.search_icon.setAlignment(Qt.AlignCenter)
+        self.search_icon.setStyleSheet(f"""
+            QLabel {{
+                background-color: {bg_color};
+                color: {icon_color};
+                font-size: 12px;
+                padding: 0px;
+                border: 1px solid {border_color};
+                border-right: none;
+                border-top-left-radius: 4px;
+                border-bottom-left-radius: 4px;
+            }}
+        """)
+
+        self.search_box = QLineEdit(search_container)
         self.search_box.setPlaceholderText("Type to search...")
         self.search_box.textChanged.connect(self.textChanged.emit)
-        main_layout.addWidget(self.search_box)
+        self.search_box.setStyleSheet(f"""
+            QLineEdit {{
+                padding: 6px 8px;
+                border: 1px solid {border_color};
+                border-left: none;
+                border-right: none;
+                background-color: {bg_color};
+                color: {text_color};
+                font-size: 13px;
+            }}
+            QLineEdit:hover {{
+                border-color: {border_color};
+            }}
+            QLineEdit:focus {{
+                border-color: {border_color};
+                outline: none;
+            }}
+        """)
+
+        # Create loading indicator (circular spinner) - positioned on the right
+        self.loading_label = QLabel(self)
+        self.loading_label.setFixedSize(30, 30)
+        self.loading_label.setAlignment(Qt.AlignCenter)
+        self.loading_label.setVisible(False)
+        self.loading_label.setStyleSheet(f"""
+            QLabel {{
+                background-color: {bg_color};
+                color: red;
+                font-size: 24px;
+                border: 1px solid {border_color};
+                border-left: none;
+                border-top-right-radius: 4px;
+                border-bottom-right-radius: 4px;
+            }}
+        """)
+
+        # Create a simple animated loading indicator using Unicode spinner
+        self.loading_timer = QTimer(self)
+        self.loading_timer.timeout.connect(self._update_loading_animation)
+        self.loading_frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
+        self.loading_frame_index = 0
+
+        # Dropdown arrow icon label (right side, hidden when loading)
+        self.dropdown_icon = QLabel("▼", search_container)
+        self.dropdown_icon.setFixedWidth(28)
+        self.dropdown_icon.setAlignment(Qt.AlignCenter)
+        self.dropdown_icon.setStyleSheet(f"""
+            QLabel {{
+                background-color: {bg_color};
+                color: {icon_color};
+                font-size: 10px;
+                padding: 0px;
+                border: 1px solid {border_color};
+                border-left: none;
+                border-top-right-radius: 4px;
+                border-bottom-right-radius: 4px;
+            }}
+        """)
+
+        search_layout.addWidget(self.search_icon)
+        search_layout.addWidget(self.search_box)
+        search_layout.addWidget(self.loading_label)
+        search_layout.addWidget(self.dropdown_icon)
+
+        main_layout.addWidget(search_container)
 
         self.chip_container = QWidget(self)
         self.chip_layout = FlowLayout(self.chip_container, spacing=4)
@@ -579,7 +795,8 @@ class DynamicSearchFilterWidget(QWidget):
 
     def setCurrentData(self, data_list):
         """Set the current selection by data values."""
-        self._selected_items = {item: item for item in data_list}
+        # Filter out empty strings to avoid empty chips
+        self._selected_items = {item: item for item in data_list if item}
         self._updateChips()
 
     def eventFilter(self, obj, event):
@@ -612,37 +829,249 @@ class DynamicSearchFilterWidget(QWidget):
             self._updateChips()
             self.selectionChanged.emit(self.currentData())
 
+    def show_loading(self):
+        """Show loading indicator and start animation."""
+        self.dropdown_icon.setVisible(False)
+        self.loading_label.setVisible(True)
+        self.loading_frame_index = 0
+        self.loading_timer.start(100)  # Update every 100ms
+
+    def hide_loading(self):
+        """Hide loading indicator and stop animation."""
+        self.loading_timer.stop()
+        self.loading_label.setVisible(False)
+        self.dropdown_icon.setVisible(True)
+
+    def _update_loading_animation(self):
+        """Update the loading animation frame."""
+        self.loading_label.setText(self.loading_frames[self.loading_frame_index])
+        self.loading_frame_index = (self.loading_frame_index + 1) % len(self.loading_frames)
+
+    def has_unselected_text(self):
+        """Check if there's text in the search box that hasn't been selected.
+
+        Returns True only if there's text AND no items are selected.
+        If items are selected, the text will be cleared automatically.
+        """
+        has_text = bool(self.search_box.text().strip())
+        has_selections = bool(self._selected_items)
+
+        # Only return True if there's text but NO selections
+        return has_text and not has_selections
+
+    def clear_search_text(self):
+        """Clear the search text field."""
+        self.search_box.clear()
+
 class SearchableStaticFilterWidget(QWidget):
     """A widget for searchable static data with chip display (no API calls)."""
 
     selectionChanged = pyqtSignal(list)
 
-    def __init__(self, static_data=None, parent=None):
+    def __init__(self, static_data=None, parent=None, show_all_chips=False, show_search_icon=True, read_only=False):
         super().__init__(parent)
         self._selected_items = {}
         self._static_data = static_data or []  # List of strings or tuples (display, value)
+        self._show_all_chips = show_all_chips  # Control whether to show all chips or limit to 4
+        self._show_search_icon = show_search_icon  # Control whether to show search icon
+        self._read_only = read_only  # Control whether search box is read-only (click-only selection)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(4)
 
-        self.search_box = QLineEdit(self)
-        self.search_box.setPlaceholderText("Type to search...")
-        self.search_box.textChanged.connect(self._on_search_text_changed)
-        main_layout.addWidget(self.search_box)
+        # Create a container for the search box with icons
+        search_container = QWidget(self)
+        search_container.setFixedHeight(30)
+        search_layout = QHBoxLayout(search_container)
+        search_layout.setContentsMargins(0, 0, 0, 0)
+        search_layout.setSpacing(0)
+
+        # Detect theme for styling
+        from qgis.PyQt.QtWidgets import QApplication
+        palette = QApplication.palette()
+        window_color = palette.color(palette.Window)
+        is_dark_theme = window_color.lightness() < 128
+
+        # Theme-aware colors
+        if is_dark_theme:
+            border_color = "#555555"
+            bg_color = "#2b2b2b"
+            text_color = "#E0E0E0"
+            placeholder_color = "#888888"
+            hover_border = "#2196F3"
+            focus_border = "#1976D2"
+            icon_color = "#888888"
+        else:
+            border_color = "#C0C0C0"
+            bg_color = "#FFFFFF"
+            text_color = "#000000"
+            placeholder_color = "#999999"
+            hover_border = "#2196F3"
+            focus_border = "#1976D2"
+            icon_color = "#666666"
+
+        # Search icon label (left side) - conditionally shown
+        if self._show_search_icon:
+            self.search_icon = QLabel("🔍", search_container)
+            self.search_icon.setFixedWidth(28)
+            self.search_icon.setAlignment(Qt.AlignCenter)
+            self.search_icon.setStyleSheet(f"""
+                QLabel {{
+                    background-color: {bg_color};
+                    color: {icon_color};
+                    font-size: 12px;
+                    padding: 0px;
+                    border: 1px solid {border_color};
+                    border-right: none;
+                    border-top-left-radius: 4px;
+                    border-bottom-left-radius: 4px;
+                }}
+            """)
+
+        self.search_box = QLineEdit(search_container)
+
+        # Set read-only mode if specified
+        if self._read_only:
+            self.search_box.setReadOnly(True)
+            self.search_box.setPlaceholderText("Click to select...")
+        else:
+            self.search_box.setPlaceholderText("Click to select or type to search...")
+            self.search_box.textChanged.connect(self._on_search_text_changed)
+
+        # Adjust search box borders based on whether search icon is shown
+        if self._show_search_icon:
+            search_box_style = f"""
+                QLineEdit {{
+                    padding: 6px 8px;
+                    border: 1px solid {border_color};
+                    border-left: none;
+                    border-right: none;
+                    background-color: {bg_color};
+                    color: {text_color};
+                    font-size: 13px;
+                }}
+                QLineEdit:hover {{
+                    border-color: {border_color};
+                }}
+                QLineEdit:focus {{
+                    border-color: {border_color};
+                    outline: none;
+                }}
+            """
+        else:
+            search_box_style = f"""
+                QLineEdit {{
+                    padding: 6px 8px;
+                    border: 1px solid {border_color};
+                    border-right: none;
+                    border-top-left-radius: 4px;
+                    border-bottom-left-radius: 4px;
+                    background-color: {bg_color};
+                    color: {text_color};
+                    font-size: 13px;
+                }}
+                QLineEdit:hover {{
+                    border-color: {border_color};
+                }}
+                QLineEdit:focus {{
+                    border-color: {border_color};
+                    outline: none;
+                }}
+            """
+
+        self.search_box.setStyleSheet(search_box_style)
+
+        # Dropdown arrow icon label (right side)
+        self.dropdown_icon = QLabel("▼", search_container)
+        self.dropdown_icon.setFixedWidth(28)
+        self.dropdown_icon.setAlignment(Qt.AlignCenter)
+        self.dropdown_icon.setStyleSheet(f"""
+            QLabel {{
+                background-color: {bg_color};
+                color: {icon_color};
+                font-size: 10px;
+                padding: 0px;
+                border: 1px solid {border_color};
+                border-left: none;
+                border-top-right-radius: 4px;
+                border-bottom-right-radius: 4px;
+            }}
+        """)
+
+        # Add widgets to layout based on whether search icon is shown
+        if self._show_search_icon:
+            search_layout.addWidget(self.search_icon)
+        search_layout.addWidget(self.search_box)
+        search_layout.addWidget(self.dropdown_icon)
+
+        main_layout.addWidget(search_container)
+
+        # Store original mouse press event
+        self._original_mouse_press_event = self.search_box.mousePressEvent
+        # Override mouse press event to show all options on click
+        self.search_box.mousePressEvent = self._on_search_box_mouse_press
 
         self.chip_container = QWidget(self)
-        self.chip_layout = FlowLayout(self.chip_container, spacing=4)
+        self.chip_layout = FlowLayout(self.chip_container, spacing=6)
         self.chip_container.setVisible(False)
         main_layout.addWidget(self.chip_container)
 
         self.popup = QDialog(self, Qt.Popup)
         self.popup_layout = QVBoxLayout(self.popup)
+        self.popup_layout.setContentsMargins(0, 0, 0, 0)
+        self.popup_layout.setSpacing(0)
+
         self.results_list = QListView(self.popup)
         self.results_list.setModel(QStandardItemModel(self.results_list))
         self.results_list.clicked.connect(self.onResultClicked)
         # Prevent the list from taking keyboard focus
         self.results_list.setFocusPolicy(Qt.NoFocus)
+
+        # Enhanced popup styling with theme-awareness
+        if is_dark_theme:
+            popup_bg = "#2b2b2b"
+            popup_border = "#555555"
+            item_text = "#E0E0E0"
+            item_hover_bg = "#0D47A1"
+            item_selected_bg = "#1565C0"
+        else:
+            popup_bg = "#FFFFFF"
+            popup_border = "#C0C0C0"
+            item_text = "#000000"
+            item_hover_bg = "#E3F2FD"
+            item_selected_bg = "#BBDEFB"
+
+        self.popup.setStyleSheet(f"""
+            QDialog {{
+                background-color: {popup_bg};
+                border: 1px solid {popup_border};
+                border-radius: 4px;
+            }}
+        """)
+
+        self.results_list.setStyleSheet(f"""
+            QListView {{
+                background-color: {popup_bg};
+                color: {item_text};
+                border: none;
+                outline: none;
+                padding: 4px;
+                font-size: 13px;
+            }}
+            QListView::item {{
+                padding: 8px 10px;
+                border-radius: 3px;
+                margin: 2px;
+            }}
+            QListView::item:hover {{
+                background-color: {item_hover_bg};
+            }}
+            QListView::item:selected {{
+                background-color: {item_selected_bg};
+            }}
+        """)
+
         self.popup_layout.addWidget(self.results_list)
         self.popup.setMinimumWidth(300)
         # Prevent the popup dialog from taking keyboard focus
@@ -678,6 +1107,32 @@ class SearchableStaticFilterWidget(QWidget):
         else:
             self.popup.hide()
 
+    def _on_search_box_mouse_press(self, event):
+        """Handle mouse press event on search box to show all options."""
+        # Call original mouse press event first to handle normal behavior
+        self._original_mouse_press_event(event)
+
+        # Show all options if search box is empty
+        if not self.search_box.text().strip():
+            self._show_all_options()
+
+    def _show_all_options(self):
+        """Show all available options in the popup."""
+        all_results = []
+        for item in self._static_data:
+            if isinstance(item, tuple):
+                display_text, value = item
+                # Exclude already selected items
+                if value not in self._selected_items:
+                    all_results.append((display_text, value))
+            elif isinstance(item, str):
+                # Exclude already selected items
+                if item not in self._selected_items:
+                    all_results.append((item, item))
+
+        if all_results:
+            self.showPopup(all_results)
+
     def showPopup(self, results):
         """Show popup with search results."""
         self.results_list.model().clear()
@@ -772,8 +1227,14 @@ class SearchableStaticFilterWidget(QWidget):
 
     def setCurrentData(self, data_list):
         """Set the current selection by data values."""
-        self._selected_items = {item: item for item in data_list}
+        # Filter out empty strings to avoid empty chips
+        self._selected_items = {item: item for item in data_list if item}
         self._updateChips()
+
+    def set_show_all_chips(self, show_all):
+        """Set whether to show all chips or limit to 4."""
+        self._show_all_chips = show_all
+        self._updateChips()  # Refresh display
 
     def eventFilter(self, obj, event):
         """Event filter to redirect keyboard events from popup to search box."""
@@ -804,6 +1265,22 @@ class SearchableStaticFilterWidget(QWidget):
             self._selected_items = dialog.selected_items.copy()
             self._updateChips()
             self.selectionChanged.emit(self.currentData())
+
+    def has_unselected_text(self):
+        """Check if there's text in the search box that hasn't been selected.
+
+        Returns True only if there's text AND no items are selected.
+        If items are selected, the text will be cleared automatically.
+        """
+        has_text = bool(self.search_box.text().strip())
+        has_selections = bool(self._selected_items)
+
+        # Only return True if there's text but NO selections
+        return has_text and not has_selections
+
+    def clear_search_text(self):
+        """Clear the search text field."""
+        self.search_box.clear()
 
 class StaticFilterWidget(QWidget):
     """A composite widget that combines a CheckableComboBox with a chip container."""
@@ -918,10 +1395,15 @@ class LoginDialog(QDialog):
         # Fix focus issues
         self.button_box.button(QDialogButtonBox.Ok).setDefault(False)
         self.button_box.button(QDialogButtonBox.Ok).setAutoDefault(False)
-        self.button_box.button(QDialogButtonBox.Cancel).setDefault(False) 
+        self.button_box.button(QDialogButtonBox.Cancel).setDefault(False)
         self.button_box.button(QDialogButtonBox.Cancel).setAutoDefault(False)
         self.button_box.accepted.connect(self.handle_login_attempt)
         self.button_box.rejected.connect(self.reject)
+
+        # Apply theme-aware button styling
+        button_style = get_theme_aware_button_style()
+        self.button_box.button(QDialogButtonBox.Ok).setStyleSheet(button_style)
+        self.button_box.button(QDialogButtonBox.Cancel).setStyleSheet(button_style)
         
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -1014,24 +1496,7 @@ class LayerOptionsDialog(QDialog):
 
         # Create a horizontal layout for styling controls
         point_style_layout = QHBoxLayout()
-
-        # --- Point Color Widgets (Button with label) ---
-        # Add color label
-        point_style_layout.addWidget(QLabel("Pick Color:"))
-        # Color selection button (Already defined with its style)
-        self.color_button = QPushButton()
-        self.color_button.setMaximumSize(40, 25) 
-        self.color_button.setAutoDefault(False)
-        # ... connect and style button (ensure the rounded style is applied)
-        self.selected_color = QColor(255, 0, 0)
-        self.update_color_button_stylesheet() # Make sure this applies the rounded style
-        self.color_button.clicked.connect(self.select_color)
-
-        point_style_layout.addWidget(self.color_button)
-
-        # --- Spacing (12 pixels) ---
-        point_style_layout.addSpacing(12)
-
+        
         # --- Point Size Widgets (SpinBox with label) ---
         # Add size label
         point_style_layout.addWidget(QLabel("Point Size:"))
@@ -1044,13 +1509,32 @@ class LayerOptionsDialog(QDialog):
         self.point_size_spin.setFocusPolicy(Qt.StrongFocus) 
 
         point_style_layout.addWidget(self.point_size_spin)
+        
+        # --- Spacing (12 pixels) ---
+        point_style_layout.addSpacing(12)
+
+        # --- Point Color Widgets (Button with label) ---
+        # Add color label
+        point_style_layout.addWidget(QLabel("Color:"))
+        # Color selection button (Already defined with its style)
+        self.color_button = QPushButton()
+        self.color_button.setFixedHeight(20)
+        self.color_button.setFixedWidth(48)
+        self.color_button.setAutoDefault(False)
+        # ... connect and style button (ensure the rounded style is applied)
+        self.selected_color = QColor(255, 0, 0)
+        self.update_color_button_stylesheet() # Make sure this applies the rounded style
+        self.color_button.clicked.connect(self.select_color)
+
+        point_style_layout.addWidget(self.color_button)
+
 
         # --- Add Stretch to Push Elements to the Left ---
         # This line is crucial: it pushes the combined widgets to the left and fills the rest of the row.
         point_style_layout.addStretch()
 
         # Add the final layout to your form
-        form_layout.addRow("Point Styling:", point_style_layout)
+        form_layout.addRow("Styling:", point_style_layout)
 
         layout.addLayout(form_layout)
 
@@ -1076,7 +1560,8 @@ class LayerOptionsDialog(QDialog):
 
             self.trace_preset_combo = QComboBox()
             for preset_name in get_available_presets():
-                self.trace_preset_combo.addItem(preset_name)
+                display_name = f"{preset_name}"
+                self.trace_preset_combo.addItem(display_name, preset_name)  # Store original name as data
             self.trace_preset_combo.addItem("Custom")  # Add Custom option
             self.trace_preset_combo.setCurrentText("Default")
             self.trace_preset_combo.currentTextChanged.connect(self._on_preset_changed)
@@ -1140,7 +1625,17 @@ class LayerOptionsDialog(QDialog):
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self._on_accept)
         self.button_box.rejected.connect(self.reject)
+
+        # Apply theme-aware button styling
+        button_style = get_theme_aware_button_style()
+        self.button_box.button(QDialogButtonBox.Ok).setStyleSheet(button_style)
+        self.button_box.button(QDialogButtonBox.Cancel).setStyleSheet(button_style)
+
         layout.addWidget(self.button_box)
+
+        # Apply theme-aware styling to combo boxes
+        if self.is_assay_data:
+            self._apply_combobox_styling()
 
     def _populate_ranges(self):
         """Populate range widgets from current configuration."""
@@ -1159,6 +1654,9 @@ class LayerOptionsDialog(QDialog):
         # Update editability based on preset
         is_custom = self.trace_preset_combo.currentText() == "Custom"
         self._set_ranges_editable(is_custom)
+
+        # Apply theme-aware styling to newly added combo boxes
+        self._apply_combobox_styling()
 
     def _add_range_widget(self, trace_range):
         """Add a range widget to the layout."""
@@ -1216,6 +1714,125 @@ class LayerOptionsDialog(QDialog):
         if hasattr(self, 'add_range_button'):
             self.add_range_button.setVisible(editable)
 
+    def _apply_combobox_styling(self):
+        """Apply theme-aware styling to all combo boxes in the dialog."""
+        try:
+            from PyQt5.QtWidgets import QApplication
+            palette = QApplication.palette()
+            window_color = palette.color(palette.Window)
+            is_dark_theme = window_color.lightness() < 128
+
+            if is_dark_theme:
+                combobox_style = """
+                    QComboBox {
+                        color: #FFFFFF;
+                        background-color: #3C3C3C;
+                        border: 1px solid #555555;
+                        padding: 3px 25px 3px 3px;
+                    }
+                    QComboBox:hover {
+                        border: 1px solid #777777;
+                    }
+                    QComboBox:disabled {
+                        color: #808080;
+                        background-color: #2A2A2A;
+                        border: 1px solid #444444;
+                    }
+                    QComboBox::drop-down {
+                        subcontrol-origin: padding;
+                        subcontrol-position: top right;
+                        width: 20px;
+                        border-left: 1px solid #555555;
+                        background-color: #4A4A4A;
+                    }
+                    QComboBox::drop-down:hover {
+                        background-color: #555555;
+                    }
+                    QComboBox::drop-down:disabled {
+                        background-color: #2A2A2A;
+                        border-left: 1px solid #444444;
+                    }
+                    QComboBox::down-arrow {
+                        image: none;
+                        border-left: 4px solid transparent;
+                        border-right: 4px solid transparent;
+                        border-top: 6px solid #FFFFFF;
+                        width: 0px;
+                        height: 0px;
+                    }
+                    QComboBox::down-arrow:disabled {
+                        border-top: 6px solid #555555;
+                    }
+                    QComboBox QAbstractItemView {
+                        color: #FFFFFF;
+                        background-color: #3C3C3C;
+                        selection-background-color: #4A4A4A;
+                        selection-color: #FFFFFF;
+                    }
+                """
+            else:
+                combobox_style = """
+                    QComboBox {
+                        color: #000000;
+                        background-color: #FFFFFF;
+                        border: 1px solid #CCCCCC;
+                        padding: 3px 25px 3px 3px;
+                    }
+                    QComboBox:hover {
+                        border: 1px solid #999999;
+                    }
+                    QComboBox:disabled {
+                        color: #999999;
+                        background-color: #F5F5F5;
+                        border: 1px solid #E0E0E0;
+                    }
+                    QComboBox::drop-down {
+                        subcontrol-origin: padding;
+                        subcontrol-position: top right;
+                        width: 20px;
+                        border-left: 1px solid #CCCCCC;
+                        background-color: #F0F0F0;
+                    }
+                    QComboBox::drop-down:hover {
+                        background-color: #E0E0E0;
+                    }
+                    QComboBox::drop-down:disabled {
+                        background-color: #F5F5F5;
+                        border-left: 1px solid #E0E0E0;
+                    }
+                    QComboBox::down-arrow {
+                        image: none;
+                        border-left: 4px solid transparent;
+                        border-right: 4px solid transparent;
+                        border-top: 6px solid #000000;
+                        width: 0px;
+                        height: 0px;
+                    }
+                    QComboBox::down-arrow:disabled {
+                        border-top: 6px solid #BBBBBB;
+                    }
+                    QComboBox QAbstractItemView {
+                        color: #000000;
+                        background-color: #FFFFFF;
+                        selection-background-color: #E3F2FD;
+                        selection-color: #000000;
+                    }
+                """
+
+            # Apply to trace preset combo
+            self.trace_preset_combo.setStyleSheet(combobox_style)
+
+            # Apply to all range widget combos (lower/upper type combos)
+            for widget in self.range_widgets:
+                if hasattr(widget, 'lower_type_combo'):
+                    widget.lower_type_combo.setStyleSheet(combobox_style)
+                if hasattr(widget, 'upper_type_combo'):
+                    widget.upper_type_combo.setStyleSheet(combobox_style)
+
+        except Exception:
+            # Fail silently - styling is optional
+            pass
+
     def _on_preset_changed(self, preset_name):
         """Handle preset selection change."""
         from ..config.trace_ranges import get_preset_by_name, get_industry_standard_preset, TraceRange
@@ -1238,8 +1855,10 @@ class LayerOptionsDialog(QDialog):
             self.trace_range_config = TraceRangeConfiguration(custom_ranges, "Custom")
             self._populate_ranges()
         else:
+            # Extract actual preset name from display name (remove " (Cannot edit)" suffix)
+            actual_preset_name = preset_name.replace(" (Cannot edit)", "")
             # Load preset configuration
-            self.trace_range_config = get_preset_by_name(preset_name)
+            self.trace_range_config = get_preset_by_name(actual_preset_name)
             self._populate_ranges()
 
     def _on_accept(self):
@@ -1335,10 +1954,10 @@ class LayerOptionsDialog(QDialog):
         self.color_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {self.selected_color.name()};
-                border: 2px solid #333;
+                border: 1px solid #333;
                 padding: 8px;
                 font-weight: bold;
-                border-radius: 10px; 
+                border-radius: 0px; 
             }}
             QPushButton:hover {{
                 cursor:pointer
@@ -1444,14 +2063,17 @@ Performance Impact:
         
         # Cancel button
         self.cancel_btn = QPushButton("Cancel Import")
-        self.cancel_btn.setStyleSheet("padding: 8px;")
-        
+
+        # Apply theme-aware button styling
+        button_style = get_theme_aware_button_style()
+        self.cancel_btn.setStyleSheet(button_style)
+
         button_layout.addWidget(self.import_all_btn)
         button_layout.addWidget(self.import_partial_btn)
         button_layout.addWidget(self.cancel_btn)
-        
+
         layout.addLayout(button_layout)
-        
+
         # Connect signals
         self.import_all_btn.clicked.connect(self._import_all)
         self.import_partial_btn.clicked.connect(self._import_partial)
@@ -1673,6 +2295,11 @@ class FetchDetailsDialog(QDialog):
         # Close button
         button_box = QDialogButtonBox(QDialogButtonBox.Close)
         button_box.rejected.connect(self.reject)
+
+        # Apply theme-aware button styling
+        button_style = get_theme_aware_button_style()
+        button_box.button(QDialogButtonBox.Close).setStyleSheet(button_style)
+
         layout.addWidget(button_box)
 
 
@@ -1868,6 +2495,12 @@ class PolygonSelectionDialog(QDialog):
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         button_box.accepted.connect(self._on_accept)
         button_box.rejected.connect(self.reject)
+
+        # Apply theme-aware button styling
+        button_style = get_theme_aware_button_style()
+        button_box.button(QDialogButtonBox.Ok).setStyleSheet(button_style)
+        button_box.button(QDialogButtonBox.Cancel).setStyleSheet(button_style)
+
         layout.addWidget(button_box)
 
     def _setup_map(self):
@@ -2113,10 +2746,12 @@ class TraceRangeWidget(QWidget):
         self.name_input.textChanged.connect(self.changed.emit)
         top_row.addWidget(self.name_input, stretch=3)
 
-        self.color_button = QPushButton("Color")
-        self.color_button.setFixedWidth(60)
+        self.color_button = QPushButton(" ")  # Single space to ensure button is clickable
+        self.color_button.setFixedHeight(20)
+        self.color_button.setFixedWidth(48)
         self.color_button.setDefault(False)
         self.color_button.setAutoDefault(False)
+        self.color_button.setCursor(QCursor(Qt.PointingHandCursor))  # Show pointer cursor on hover
         self.selected_color = QColor(100, 181, 246)  # Default blue
         self._update_color_button()
         self.color_button.clicked.connect(self._select_color)
@@ -2210,7 +2845,7 @@ class TraceRangeWidget(QWidget):
         self.color_button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {self.selected_color.name()};
-                border: 2px solid #333;
+                border: 1px solid #333;
                 padding: 4px;
                 font-weight: bold;
             }}

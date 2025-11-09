@@ -29,7 +29,7 @@ from typing import List, Tuple
 
 # Plugin metadata and version information
 PLUGIN_NAME = "Needle Digital DH Importer"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.3.3"
 PLUGIN_AUTHOR = "Needle Digital"
 PLUGIN_DESCRIPTION = "Import Australian mining drill hole data into QGIS"
 
@@ -124,7 +124,7 @@ DEFAULT_TRACE_RANGE_PRESET = "Default"  # Default preset to use
 # Australian states and territories
 AUSTRALIAN_STATES: List[Tuple[str, str]] = [
     ("New South Wales", "NSW"),
-    ("Queensland", "QLD"), 
+    ("Queensland", "QLD"),
     ("South Australia", "SA"),
     ("Tasmania", "TAS"),
     ("Victoria", "VIC"),
